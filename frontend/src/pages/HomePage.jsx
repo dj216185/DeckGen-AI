@@ -120,9 +120,9 @@ export default function HomePage() {
           setError("Task not found. The backend may have restarted — please try again.");
           return;
         }
-        if (pollRef.current >= 8) {
+        if (pollRef.current >= 15) {
           setBusy(false);
-          setError("Lost connection to the backend. Make sure the Node server is running on port 5001.");
+          setError("Lost connection to the backend. Make sure the backend server is reachable.");
           return;
         }
         setError(`Retrying… (attempt ${pollRef.current})`);

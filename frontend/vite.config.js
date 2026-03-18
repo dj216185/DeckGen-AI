@@ -9,27 +9,27 @@ export default defineConfig({
     strictPort: true,
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:5001",
+        target: "https://deckgen-ai.onrender.com",
         changeOrigin: true
       },
       "/generate": {
-        target: "http://127.0.0.1:5001",
+        target: "https://deckgen-ai.onrender.com",
         changeOrigin: true
       },
       "/status": {
-        target: "http://127.0.0.1:5001",
+        target: "https://deckgen-ai.onrender.com",
         changeOrigin: true
       },
       "/download": {
-        target: "http://127.0.0.1:5001",
+        target: "https://deckgen-ai.onrender.com",
         changeOrigin: true
       },
       "/download_search": {
-        target: "http://127.0.0.1:5001",
+        target: "https://deckgen-ai.onrender.com",
         changeOrigin: true
       },
       "/themes": {
-        target: "http://127.0.0.1:5001",
+        target: "https://deckgen-ai.onrender.com",
         changeOrigin: true
       }
     }
