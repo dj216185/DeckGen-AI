@@ -177,9 +177,63 @@ Generate ALL ${totalSlides} slides now:`;
     }
   } catch (batchError) {
     console.error("[generator] Batch generation failed:", batchError.message, "- using fallback");
+  }
 
-    for (const { section, slide_title } of allSlidesInfo) {
-      slidesStructuredJson.push({
+  // ── Reconcile against outline ─────────────────────────────────────────────
+  // The LLM may return fewer slides or use slightly different titles.
+  // We pin the final output to the outline order, matching generated slides
+  // by title similarity and filling fallbacks for any missing ones.
+
+  function normalizeTitle(t) {
+    return String(t || "").toLowerCase().replace(/[^a-z0-9\s]/g, "").trim();
+  }
+
+  function titleSimilarity(a, b) {
+    const na = normalizeTitle(a);
+    const nb = normalizeTitle(b);
+    if (na === nb) return 1;
+    // Check if one contains the other
+    if (na.includes(nb) || nb.includes(na)) return 0.8;
+    // Word overlap score
+    const wa = new Set(na.split(/\s+/).filter(w => w.length > 2));
+    const wb = new Set(nb.split(/\s+/).filter(w => w.length > 2));
+    const shared = [...wa].filter(w => wb.has(w)).length;
+    const total = Math.max(wa.size, wb.size, 1);
+    return shared / total;
+  }
+
+  const usedIndices = new Set();
+  const reconciledSlides = [];
+
+  for (const { section, slide_title } of allSlidesInfo) {
+    // Find the best matching generated slide not yet used
+    let bestIdx = -1;
+    let bestScore = 0;
+
+    for (let i = 0; i < slidesStructuredJson.length; i++) {
+      if (usedIndices.has(i)) continue;
+      const score = titleSimilarity(slide_title, slidesStructuredJson[i].slide_title);
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = i;
+      }
+    }
+
+    if (bestIdx >= 0 && bestScore >= 0.3) {
+      // Use matched slide but enforce the canonical title and section from outline
+      const matched = slidesStructuredJson[bestIdx];
+      usedIndices.add(bestIdx);
+      reconciledSlides.push({
+        slide_title: sanitizeText(slide_title),
+        section: sanitizeText(section),
+        slide_type: matched.slide_type,
+        slide_content: matched.slide_content,
+        image_prompt: matched.image_prompt
+      });
+    } else {
+      // No match — generate a placeholder so the slide isn't missing
+      console.warn(`[generator] No match for outline slide "${slide_title}" — using fallback content`);
+      reconciledSlides.push({
         slide_title: sanitizeText(slide_title),
         section: sanitizeText(section),
         slide_type: "bullets",
@@ -189,20 +243,10 @@ Generate ALL ${totalSlides} slides now:`;
     }
   }
 
-  if (slidesStructuredJson.length === 0) {
-    for (const { section, slide_title } of allSlidesInfo) {
-      slidesStructuredJson.push({
-        slide_title: sanitizeText(slide_title),
-        section: sanitizeText(section),
-        slide_type: "bullets",
-        slide_content: `• Overview of ${slide_title}\n• Key insights and data\n• Strategic recommendations`,
-        image_prompt: ""
-      });
-    }
-  }
+  console.log(`[generator] Outline: ${allSlidesInfo.length} slides | LLM returned: ${slidesStructuredJson.length} | Final: ${reconciledSlides.length}`);
 
   return {
-    generated_slides_json: slidesStructuredJson,
+    generated_slides_json: reconciledSlides,
     search_reference: searchResults
   };
 }

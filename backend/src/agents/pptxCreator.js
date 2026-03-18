@@ -253,6 +253,11 @@ function buildTextObjects(blocks, theme, slideType) {
 
 // ─── Slide Builders ─────────────────────────────────────────────────────────
 
+// LAYOUT_WIDE canvas: 13.33" wide × 7.5" tall
+const SW = 13.33; // slide width
+const SH = 7.5;   // slide height
+const MARGIN = 0.45; // left/right margin
+
 function addTitleSlide(pptx, theme, mainTitle) {
   const slide = pptx.addSlide();
   slide.background = theme.background;
@@ -266,21 +271,21 @@ function addTitleSlide(pptx, theme, mainTitle) {
 
   // Left accent strip
   slide.addShape(pptx.ShapeType.rect, {
-    x: 0, y: 0.08, w: 0.06, h: 7.42,
+    x: 0, y: 0.08, w: 0.06, h: SH - 0.08,
     fill: { color: theme.accentColor },
     line: { type: "none" }
   });
 
   // Decorative accent box (bottom-right)
   slide.addShape(pptx.ShapeType.rect, {
-    x: 7.5, y: 6.5, w: 2.5, h: 1.0,
+    x: SW - 3.0, y: 6.5, w: 3.0, h: 1.0,
     fill: { color: theme.accent2Color },
     line: { type: "none" }
   });
 
-  // Title
+  // Title — full width centered
   slide.addText(mainTitle || "Presentation", {
-    x: 0.5, y: 2.0, w: 9, h: 2.0,
+    x: MARGIN, y: 2.0, w: SW - MARGIN * 2, h: 2.2,
     fontSize: mainTitle && mainTitle.length > 50 ? 36 : 44,
     bold: true,
     color: theme.titleColor,
@@ -291,7 +296,7 @@ function addTitleSlide(pptx, theme, mainTitle) {
   });
 
   slide.addText("Made with DeckGen AI", {
-    x: 0.5, y: 4.5, w: 9, h: 0.6,
+    x: MARGIN, y: 4.5, w: SW - MARGIN * 2, h: 0.6,
     fontSize: 18,
     color: theme.isDark ? "777788" : "999999",
     fontFace: theme.bodyFont,
@@ -305,6 +310,11 @@ function addContentSlide(pptx, theme, slideInfo, slideNum) {
 
   const hasImage = slideInfo.image_path && fs.existsSync(slideInfo.image_path);
 
+  // Image layout constants (right 30% of slide)
+  const imgPanelW = SW * 0.30;           // ~4.0"
+  const imgPanelX = SW - imgPanelW - 0.1; // ~9.13"
+  const textW = hasImage ? imgPanelX - MARGIN - 0.15 : SW - MARGIN * 2;
+
   // Top accent bar
   slide.addShape(pptx.ShapeType.rect, {
     x: 0, y: 0, w: "100%", h: 0.06,
@@ -314,21 +324,21 @@ function addContentSlide(pptx, theme, slideInfo, slideNum) {
 
   // Left accent strip
   slide.addShape(pptx.ShapeType.rect, {
-    x: 0, y: 0.06, w: 0.04, h: 7.44,
+    x: 0, y: 0.06, w: 0.04, h: SH - 0.06,
     fill: { color: theme.accentColor },
     line: { type: "none" }
   });
 
-  // Bottom accent line
+  // Bottom accent line — full width
   slide.addShape(pptx.ShapeType.rect, {
-    x: 0.45, y: 7.05, w: 9.1, h: 0.03,
+    x: MARGIN, y: 7.1, w: SW - MARGIN * 2, h: 0.03,
     fill: { color: theme.accent2Color },
     line: { type: "none" }
   });
 
-  // Slide number
+  // Slide number — far right
   slide.addText(String(slideNum), {
-    x: 9.1, y: 7.1, w: 0.6, h: 0.3,
+    x: SW - 0.7, y: 7.13, w: 0.55, h: 0.28,
     fontSize: 10,
     color: theme.isDark ? "555566" : "AAAAAA",
     fontFace: theme.bodyFont,
@@ -337,27 +347,21 @@ function addContentSlide(pptx, theme, slideInfo, slideNum) {
 
   // Title underline
   slide.addShape(pptx.ShapeType.rect, {
-    x: 0.4, y: 0.98, w: 2.4, h: 0.035,
+    x: MARGIN, y: 0.98, w: 2.4, h: 0.035,
     fill: { color: theme.accentColor },
     line: { type: "none" }
   });
 
-  // Slide title
+  // Slide title — full width
   const title = slideInfo.slide_title || "Untitled";
   slide.addText(title, {
-    x: 0.4, y: 0.12, w: 9.2, h: 0.88,
+    x: MARGIN, y: 0.12, w: SW - MARGIN * 2, h: 0.88,
     fontSize: title.length > 55 ? 20 : title.length > 40 ? 24 : title.length > 28 ? 27 : 30,
     bold: true,
     color: theme.titleColor,
     fontFace: theme.titleFont,
     valign: "middle"
   });
-
-  // Layout dimensions: split when image present
-  const contentX = 0.45;
-  const contentW = hasImage ? 5.6 : 9.1;
-  const contentH = 5.7;
-  const contentY = 1.15;
 
   // Build content
   const blocks = parseContentBlocks(slideInfo.slide_content || "");
@@ -366,32 +370,32 @@ function addContentSlide(pptx, theme, slideInfo, slideNum) {
 
   if (textObjects.length > 0) {
     slide.addText(textObjects, {
-      x: contentX,
-      y: contentY,
-      w: contentW,
-      h: contentH,
+      x: MARGIN,
+      y: 1.15,
+      w: textW,
+      h: 5.75,
       valign: "top",
       shrinkText: true
     });
   }
 
-  // Image panel (right side)
+  // Image panel (right 30%)
   if (hasImage) {
-    // Subtle image background panel
+    // Background panel
     slide.addShape(pptx.ShapeType.rect, {
-      x: 6.3, y: 1.05, w: 3.3, h: 5.9,
+      x: imgPanelX, y: 1.05, w: imgPanelW, h: 5.9,
       fill: { color: theme.isDark ? "111122" : "F4F6FA" },
       line: { color: theme.accent2Color, pt: 1 }
     });
 
-    // Embed the image, centered within the panel
+    // Image — landscape-friendly 16:9 aspect, contained within panel
     slide.addImage({
       path: slideInfo.image_path,
-      x: 6.35,
+      x: imgPanelX + 0.05,
       y: 1.1,
-      w: 3.2,
+      w: imgPanelW - 0.1,
       h: 5.8,
-      sizing: { type: "contain", w: 3.2, h: 5.8 }
+      sizing: { type: "contain", w: imgPanelW - 0.1, h: 5.8 }
     });
   }
 }
@@ -407,20 +411,20 @@ function addEndSlide(pptx, theme) {
   });
 
   slide.addShape(pptx.ShapeType.rect, {
-    x: 0, y: 0.08, w: 0.06, h: 7.42,
+    x: 0, y: 0.08, w: 0.06, h: SH - 0.08,
     fill: { color: theme.accentColor },
     line: { type: "none" }
   });
 
   slide.addShape(pptx.ShapeType.rect, {
-    x: 0.5, y: 7.05, w: 9, h: 0.04,
+    x: MARGIN, y: 7.08, w: SW - MARGIN * 2, h: 0.04,
     fill: { color: theme.accent2Color },
     line: { type: "none" }
   });
 
   slide.addText("Thank You", {
-    x: 0.5, y: 2.8, w: 9, h: 1.5,
-    fontSize: 48,
+    x: MARGIN, y: 2.5, w: SW - MARGIN * 2, h: 1.8,
+    fontSize: 54,
     bold: true,
     color: theme.titleColor,
     fontFace: theme.titleFont,
@@ -429,7 +433,7 @@ function addEndSlide(pptx, theme) {
   });
 
   slide.addText("Generated by DeckGen AI", {
-    x: 0.5, y: 4.5, w: 9, h: 0.6,
+    x: MARGIN, y: 4.5, w: SW - MARGIN * 2, h: 0.6,
     fontSize: 18,
     color: theme.isDark ? "777788" : "999999",
     fontFace: theme.bodyFont,
