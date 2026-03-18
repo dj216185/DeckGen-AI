@@ -1,30 +1,39 @@
-import { callLLM, cleanLLMResponse } from "./llmService.js";
+import { callLLM, cleanLLMResponse, repairJSON } from "./llmService.js";
 import { searchAssistant } from "./searchService.js";
 
 /**
  * Parse a JSON array from an LLM response with salvage mode.
  */
 function parseBatchSlidesResilient(cleaned) {
+  // Pass 1: try raw cleaned string
   try {
     const parsed = JSON.parse(cleaned);
     if (Array.isArray(parsed)) return parsed;
   } catch { /* continue */ }
 
+  // Pass 2: try after repairJSON (fixes unescaped newlines / control chars)
+  const repaired = repairJSON(cleaned);
+  try {
+    const parsed = JSON.parse(repaired);
+    if (Array.isArray(parsed)) return parsed;
+  } catch { /* continue */ }
+
+  // Pass 3: extract the outermost [...] array, then repair & parse
   const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
   if (arrayMatch) {
     try {
-      const parsed = JSON.parse(arrayMatch[0]);
+      const parsed = JSON.parse(repairJSON(arrayMatch[0]));
       if (Array.isArray(parsed)) return parsed;
     } catch { /* continue */ }
   }
 
-  // Salvage: extract complete objects
+  // Pass 4: salvage individual complete objects
   const recovered = [];
   const objPattern = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}/g;
   let match;
   while ((match = objPattern.exec(cleaned)) !== null) {
     try {
-      const obj = JSON.parse(match[0]);
+      const obj = JSON.parse(repairJSON(match[0]));
       if (typeof obj === "object" && obj !== null && obj.slide_title) {
         recovered.push(obj);
       }

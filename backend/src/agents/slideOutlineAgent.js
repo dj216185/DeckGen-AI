@@ -1,4 +1,4 @@
-import { callLLM, cleanLLMResponse } from "./llmService.js";
+import { callLLM, cleanLLMResponse, repairJSON } from "./llmService.js";
 
 const MIN_SLIDES = 10;
 const MAX_SLIDES = 15;
@@ -129,12 +129,12 @@ Output Format:
 
   let outlineJson;
   try {
-    outlineJson = JSON.parse(cleaned);
+    outlineJson = JSON.parse(repairJSON(cleaned));
   } catch {
     // Try extracting JSON object
     const match = cleaned.match(/\{[\s\S]*\}/);
     if (!match) throw new Error(`Invalid JSON from outline agent: ${cleaned.slice(0, 200)}`);
-    outlineJson = JSON.parse(match[0]);
+    outlineJson = JSON.parse(repairJSON(match[0]));
   }
 
   const normalized = normalizeOutlineSlideCount(outlineJson, targetSlideCount, projectName);
