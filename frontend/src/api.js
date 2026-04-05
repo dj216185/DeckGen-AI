@@ -47,12 +47,20 @@ export async function saveCustomTheme(theme) {
   return data;
 }
 
-export async function startGeneration({ topic, project_info, theme, slide_count }) {
+export async function getTemplates() {
+  const res = await fetch(apiUrl('/api/templates'));
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to load templates');
+  return data;
+}
+
+export async function startGeneration({ topic, project_info, theme, slide_count, template }) {
   const body = new URLSearchParams();
   body.set('topic', topic);
   body.set('project_info', project_info || '');
   body.set('theme', theme || 'modern_dark');
   body.set('slide_count', String(slide_count));
+  if (template) body.set('template', template);
 
   const res = await fetch(apiUrl('/generate'), {
     method: 'POST',

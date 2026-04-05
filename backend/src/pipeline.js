@@ -32,7 +32,7 @@ function nowStamp() {
  *   onEvent: (evt: object) => void
  * }} params
  */
-export async function runPipeline({ taskId, topic, projectInfo, theme, slideCount, onEvent }) {
+export async function runPipeline({ taskId, topic, projectInfo, theme, template, slideCount, onEvent }) {
   const emit = (evt) => {
     try { onEvent?.(evt); } catch { /* ignore */ }
   };
@@ -126,7 +126,7 @@ export async function runPipeline({ taskId, topic, projectInfo, theme, slideCoun
     fs.writeFileSync(mdFile, state.final_output || "No content generated.", "utf-8");
 
     // Generate PPTX (slides now have image_path attached)
-    await createPresentation(reviewedSlides, pptxFile, { themeName: theme, mainTitle: topic });
+    await createPresentation(reviewedSlides, pptxFile, { themeName: theme, mainTitle: topic, templateName: template });
 
     // Cleanup temp image cache
     try { fs.rmSync(imagesTmpDir, { recursive: true, force: true }); } catch { /* ignore */ }

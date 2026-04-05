@@ -1,4 +1,4 @@
-import { callLLM, cleanLLMResponse, repairJSON } from "./llmService.js";
+import { callLLM, extractJSON } from "./llmService.js";
 
 const MIN_SLIDES = 10;
 const MAX_SLIDES = 15;
@@ -115,26 +115,27 @@ Content Optimization:
 - Break complex concepts into multiple digestible slides
 
 Output Format:
-- Return ONLY valid JSON (no code fences, no commentary) as an object mapping section titles to arrays of slide titles
+- Return ONLY raw valid JSON — no markdown, no code fences, no explanation before or after
+- Use double-quoted strings only (no single quotes)
+- No trailing commas, no JavaScript comments
 - Example:
 {
     "Section A": ["Focused Slide 1", "Specific Slide 2"],
     "Section B": ["Clear Point 1", "Distinct Point 2"]
-}`;
+}
+YOUR RESPONSE MUST START WITH { AND END WITH } — NOTHING ELSE.`;
 
   const raw = await callLLM(prompt, 0.7);
-  const cleaned = cleanLLMResponse(raw);
-
-  if (!cleaned.trim()) throw new Error("LLM returned empty response for slide outline");
+  if (!raw?.trim()) throw new Error("LLM returned empty response for slide outline");
 
   let outlineJson;
   try {
-    outlineJson = JSON.parse(repairJSON(cleaned));
-  } catch {
-    // Try extracting JSON object
-    const match = cleaned.match(/\{[\s\S]*\}/);
-    if (!match) throw new Error(`Invalid JSON from outline agent: ${cleaned.slice(0, 200)}`);
-    outlineJson = JSON.parse(repairJSON(match[0]));
+    outlineJson = extractJSON(raw, "object");
+    if (typeof outlineJson !== "object" || outlineJson === null || Array.isArray(outlineJson)) {
+      throw new Error("Outline JSON is not an object");
+    }
+  } catch (err) {
+    throw new Error(`Invalid JSON from outline agent: ${err.message}. Preview: ${String(raw).slice(0, 200)}`);
   }
 
   const normalized = normalizeOutlineSlideCount(outlineJson, targetSlideCount, projectName);

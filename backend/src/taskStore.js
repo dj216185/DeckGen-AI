@@ -38,7 +38,7 @@ function createSearchFile(task, searchInfo) {
   return full;
 }
 
-export function createTask({ user_query, project_info, theme, slide_count }) {
+export function createTask({ user_query, project_info, theme, slide_count, template }) {
   const task_id = uuidv4();
   const boundedSlides = clampSlides(slide_count);
 
@@ -47,6 +47,7 @@ export function createTask({ user_query, project_info, theme, slide_count }) {
     user_query,
     project_info: project_info || "",
     theme: theme || "modern_wine",
+    template: template || "corporate_modern",
     slide_count: boundedSlides,
     status: "queued",
     progress: 0,
@@ -74,6 +75,7 @@ export function createTask({ user_query, project_info, theme, slide_count }) {
     topic: user_query,
     projectInfo: task.project_info,
     theme: task.theme,
+    template: task.template,
     slideCount: boundedSlides,
     onEvent: (evt) => {
       const t = tasks.get(task_id);

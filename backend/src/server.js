@@ -15,6 +15,7 @@ import {
   PROJECT_ROOT
 } from "./config.js";
 import { createTask, deleteTask, getTask, listTasks } from "./taskStore.js";
+import { getAvailableTemplates } from "./agents/pptxCreator.js";
 
 dotenv.config({ path: path.join(APP_ROOT, ".env"), override: false });
 dotenv.config({ path: path.join(PROJECT_ROOT, ".env"), override: false });
@@ -130,6 +131,7 @@ app.post("/generate", (req, res) => {
     const user_query = String(req.body.topic || "").trim();
     const project_info = String(req.body.project_info || "").trim();
     const theme = String(req.body.theme || DEFAULT_THEME).trim();
+    const template = String(req.body.template || "corporate_modern").trim();
 
     let slide_count = Number(req.body.slide_count || MAX_SLIDES);
     if (!Number.isFinite(slide_count)) slide_count = MAX_SLIDES;
@@ -139,7 +141,7 @@ app.post("/generate", (req, res) => {
       return res.status(400).json({ error: "Please provide a topic" });
     }
 
-    const task = createTask({ user_query, project_info, theme, slide_count });
+    const task = createTask({ user_query, project_info, theme, slide_count, template });
     return res.json({
       task_id: task.task_id,
       message: "Generation started",
@@ -321,6 +323,11 @@ app.delete("/api/delete-custom-theme/:theme_id", (req, res) => {
   } catch {
     return res.status(500).json({ error: "Failed to delete theme" });
   }
+});
+
+// Templates
+app.get("/api/templates", (_req, res) => {
+  res.json(getAvailableTemplates());
 });
 
 // Task Delete

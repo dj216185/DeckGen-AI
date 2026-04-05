@@ -145,13 +145,12 @@ export default function ThemeCreatorPage() {
   return (
     <main className="theme-creator" data-reveal>
       <div className="theme-creator-container">
-        <section className="creator-hero">
+        <section className="creator-hero" style={{ padding: "2rem 1.5rem 1.5rem", background: "var(--bg-app)" }}>
           <div className="hero-content">
-            <h1 className="display-title">
-              <span className="title-icon">🎨</span>
-              <span className="title-text gradient-text">Custom Theme Creator</span>
+            <h1 style={{ fontFamily: "'DM Serif Display', Georgia, serif", fontSize: "2rem", color: "var(--text-primary)", marginBottom: "0.4rem" }}>
+              Custom Theme <span style={{ color: "var(--crimson)", fontStyle: "italic" }}>Creator</span>
             </h1>
-            <p className="hero-subtitle">Design your own style system and preview it in real time</p>
+            <p style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Design your own style system and preview it in real time</p>
           </div>
         </section>
 

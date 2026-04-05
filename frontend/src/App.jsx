@@ -9,255 +9,289 @@ import SettingsPage from "./pages/SettingsPage";
 import HelpPage from "./pages/HelpPage";
 import AnalyticsPage from "./pages/AnalyticsPage";
 
+const NAV = [
+  {
+    section: "Create",
+    items: [
+      { to: "/",           icon: "add_circle",         label: "New Deck"    },
+      { to: "/history",    icon: "history",             label: "History"     },
+      { to: "/templates",  icon: "dashboard_customize", label: "Templates"   },
+    ],
+  },
+  {
+    section: "Tools",
+    items: [
+      { to: "/themes",     icon: "palette",             label: "Themes"      },
+      { to: "/analytics",  icon: "insights",            label: "Analytics"   },
+    ],
+  },
+  {
+    section: "Account",
+    items: [
+      { to: "/settings",   icon: "tune",                label: "Settings"    },
+      { to: "/help",       icon: "help_outline",        label: "Help"        },
+    ],
+  },
+];
+
+const PAGE_TITLE = {
+  "/":              "Create New Deck",
+  "/history":       "History",
+  "/templates":     "Templates",
+  "/themes":        "Themes",
+  "/theme-creator": "Theme Creator",
+  "/analytics":     "Analytics",
+  "/settings":      "Settings",
+  "/help":          "Help & Support",
+};
+
 export default function App() {
+  const [sidebarOpen, setSidebarOpen]         = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [desktopSidebarExpanded, setDesktopSidebarExpanded] = useState(true);
-  const [theme, setTheme] = useState("light");
+  const [darkMode, setDarkMode]               = useState(true); // always dark now
   const location = useLocation();
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("deckgen-theme");
-    const initial = saved === "dark" ? "dark" : "light";
-    setTheme(initial);
-    document.documentElement.setAttribute("data-theme", initial);
-
-    const contrast = window.localStorage.getItem("deckgen-contrast") === "high" ? "high" : "normal";
+    document.documentElement.setAttribute("data-theme", "dark");
+    const contrast = localStorage.getItem("deckgen-contrast") === "high" ? "high" : "normal";
     document.documentElement.setAttribute("data-contrast", contrast);
-
-    const motion = window.localStorage.getItem("deckgen-motion") === "reduced" ? "reduced" : "full";
+    const motion = localStorage.getItem("deckgen-motion") === "reduced" ? "reduced" : "full";
     document.documentElement.setAttribute("data-motion", motion);
   }, []);
 
-  const breadcrumbLabel = useMemo(() => {
-    const byPath = {
-      "/": "Create Presentation",
-      "/history": "History",
-      "/templates": "Templates",
-      "/themes": "Themes",
-      "/theme-creator": "Theme Creator",
-      "/analytics": "Analytics",
-      "/settings": "Settings",
-      "/help": "Help & Support"
-    };
-    return byPath[location.pathname] || "Dashboard";
-  }, [location.pathname]);
-
-  const toggleSidebar = () => {
-    if (window.matchMedia("(min-width: 1024px)").matches) {
-      setDesktopSidebarExpanded((v) => !v);
-      return;
-    }
-    setMobileSidebarOpen((v) => !v);
-  };
-
-  const closeMobileSidebar = () => setMobileSidebarOpen(false);
-
-  useEffect(() => {
-    setMobileSidebarOpen(false);
-  }, [location.pathname]);
+  useEffect(() => { setMobileSidebarOpen(false); }, [location.pathname]);
 
   useEffect(() => {
     const targets = Array.from(document.querySelectorAll("[data-reveal]"));
     if (!targets.length) return;
-
-    targets.forEach((el, index) => {
+    targets.forEach((el, i) => {
       el.classList.remove("is-revealed");
-      el.style.setProperty("--reveal-delay", `${Math.min(index * 70, 560)}ms`);
+      el.style.setProperty("--reveal-delay", `${Math.min(i * 60, 480)}ms`);
     });
-
     const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("is-revealed");
-            observer.unobserve(entry.target);
-          }
-        });
-      },
-      { threshold: 0.14 }
+      (entries) => entries.forEach((e) => {
+        if (e.isIntersecting) { e.target.classList.add("is-revealed"); observer.unobserve(e.target); }
+      }),
+      { threshold: 0.1 }
     );
-
     targets.forEach((el) => observer.observe(el));
     return () => observer.disconnect();
   }, [location.pathname]);
 
   useEffect(() => {
-    const onKeyDown = (event) => {
-      if (event.key === "Escape") {
-        setMobileSidebarOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  useEffect(() => {
-    const isDesktop = window.matchMedia("(min-width: 1024px)").matches;
-    if (!isDesktop && mobileSidebarOpen) {
-      document.body.style.overflow = "hidden";
-    } else {
-      document.body.style.overflow = "";
-    }
-    return () => {
-      document.body.style.overflow = "";
-    };
+    document.body.style.overflow = mobileSidebarOpen ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
   }, [mobileSidebarOpen]);
 
   useEffect(() => {
-    const mql = window.matchMedia("(min-width: 1024px)");
-    const syncLayoutMode = (event) => {
-      if (event.matches) {
-        setMobileSidebarOpen(false);
-      }
-    };
-
-    syncLayoutMode(mql);
-    mql.addEventListener("change", syncLayoutMode);
-    return () => mql.removeEventListener("change", syncLayoutMode);
+    const onKey = (e) => { if (e.key === "Escape") setMobileSidebarOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const toggleTheme = () => {
-    const next = theme === "dark" ? "light" : "dark";
-    setTheme(next);
-    document.documentElement.setAttribute("data-theme", next);
-    window.localStorage.setItem("deckgen-theme", next);
-  };
-
-  const sidebarClass = `sidebar ${mobileSidebarOpen ? "open" : ""} ${desktopSidebarExpanded ? "expanded" : ""}`.trim();
-  const mainClass = `main-content ${mobileSidebarOpen ? "sidebar-open" : ""} ${desktopSidebarExpanded ? "sidebar-expanded" : ""}`.trim();
+  const pageTitle = useMemo(() => PAGE_TITLE[location.pathname] || "Dashboard", [location.pathname]);
 
   return (
-    <div className="app-container">
-      <a className="skip-link" href="#mainContent">Skip to main content</a>
-      <header className="taskbar">
-        <div className="taskbar-left">
-          <button
-            className="hamburger-btn"
-            aria-label="Toggle navigation"
-            aria-expanded={window.matchMedia("(min-width: 1024px)").matches ? desktopSidebarExpanded : mobileSidebarOpen}
-            aria-controls="sidebarNav"
-            onClick={toggleSidebar}
-          >
-            <span className="material-icons-outlined">menu</span>
-          </button>
-          <NavLink to="/" className="app-logo" onClick={closeMobileSidebar}>
-            <div className="app-logo-icon">
-              <span className="material-icons-outlined">slideshow</span>
-            </div>
-            <span>DeckGen AI</span>
-          </NavLink>
-        </div>
+    <div className="flex h-screen overflow-hidden" style={{ background: "var(--bg-app)", fontFamily: "'Outfit', sans-serif" }}>
 
-        <div className="taskbar-center">
-          <nav className="breadcrumb-nav">
-            <div className="breadcrumb-item">
-              <NavLink to="/" className="breadcrumb-link">Home</NavLink>
-              <span className="breadcrumb-separator material-icons-outlined">chevron_right</span>
-            </div>
-            <div className="breadcrumb-item">
-              <span>{breadcrumbLabel}</span>
-            </div>
-          </nav>
-        </div>
+      {/* ── Skip link ─────────────────────────────────────── */}
+      <a
+        href="#mainContent"
+        className="sr-only focus:not-sr-only focus:absolute focus:z-[9999] focus:top-3 focus:left-3
+                   focus:px-4 focus:py-2 focus:rounded-lg focus:text-sm focus:font-semibold"
+        style={{ background: "var(--crimson)", color: "#fff" }}
+      >
+        Skip to content
+      </a>
 
-        <div className="taskbar-right">
-          <button className="theme-toggle-btn" title="Toggle dark mode" onClick={toggleTheme}>
-            <span className="material-icons-outlined theme-icon">{theme === "dark" ? "light_mode" : "dark_mode"}</span>
-          </button>
-          <NavLink to="/settings" className="taskbar-action" title="Settings" onClick={closeMobileSidebar}>
-            <span className="material-icons-outlined">settings</span>
-          </NavLink>
-          <NavLink to="/help" className="taskbar-action" title="Help" onClick={closeMobileSidebar}>
-            <span className="material-icons-outlined">help_outline</span>
-          </NavLink>
-        </div>
-      </header>
+      {/* ── Mobile overlay ────────────────────────────────── */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 z-40 lg:hidden"
+          style={{ background: "rgba(0,0,0,0.75)", backdropFilter: "blur(4px)" }}
+          onClick={() => setMobileSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
 
-      <nav className={sidebarClass} id="sidebarNav" aria-label="Main navigation">
-        <div className="sidebar-header">
-          <h2 className="sidebar-title">Navigation</h2>
-          <p className="sidebar-subtitle">DeckGen AI Studio</p>
-        </div>
-
-        <div className="sidebar-nav">
-          <div className="nav-section">
-            <div className="nav-section-header">Main</div>
-            <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">add_circle_outline</span>
-              <span className="nav-item-text">Create New</span>
-            </NavLink>
-            <NavLink to="/history" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">history</span>
-              <span className="nav-item-text">History</span>
-            </NavLink>
-            <NavLink to="/templates" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">design_services</span>
-              <span className="nav-item-text">Templates</span>
-            </NavLink>
-          </div>
-
-          <div className="nav-section">
-            <div className="nav-section-header">Tools</div>
-            <NavLink to="/themes" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">palette</span>
-              <span className="nav-item-text">Themes</span>
-            </NavLink>
-            <NavLink to="/analytics" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">analytics</span>
-              <span className="nav-item-text">Analytics</span>
-            </NavLink>
-          </div>
-
-          <div className="nav-section">
-            <div className="nav-section-header">Account</div>
-            <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">settings</span>
-              <span className="nav-item-text">Settings</span>
-            </NavLink>
-            <NavLink to="/help" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`} onClick={closeMobileSidebar}>
-              <span className="nav-item-icon material-icons-outlined">help_outline</span>
-              <span className="nav-item-text">Help & Support</span>
-            </NavLink>
-          </div>
-        </div>
-      </nav>
-
-      <div
-        className={`overlay ${mobileSidebarOpen ? "active" : ""}`}
-        onClick={closeMobileSidebar}
-        role="button"
-        tabIndex={mobileSidebarOpen ? 0 : -1}
-        aria-label="Close navigation"
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            closeMobileSidebar();
-          }
+      {/* ── Sidebar ───────────────────────────────────────── */}
+      <aside
+        className={[
+          "fixed inset-y-0 left-0 z-50 flex flex-col",
+          "transition-all duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+          sidebarOpen ? "lg:w-60" : "lg:w-[68px]",
+          "w-72",
+          mobileSidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+        ].join(" ")}
+        style={{
+          background: "var(--bg-sidebar)",
+          borderRight: "1px solid var(--border)",
+          boxShadow: "4px 0 40px rgba(0,0,0,0.5)",
         }}
-      />
+        id="sidebarNav"
+        aria-label="Main navigation"
+      >
+        {/* Subtle top noise texture */}
+        <div className="absolute inset-0 pointer-events-none opacity-[0.03]"
+          style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='1'/%3E%3C/svg%3E\")", backgroundSize: "128px" }}
+        />
 
-      <main className={mainClass} id="mainContent" role="main" aria-live="polite">
-        <div className="content-container">
-          <div className="route-stage" key={location.pathname}>
-            <Routes location={location}>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/history" element={<HistoryPage />} />
-              <Route path="/templates" element={<TemplatesPage />} />
-              <Route path="/themes" element={<ThemesPage />} />
-              <Route path="/theme-creator" element={<ThemeCreatorPage />} />
-              <Route path="/analytics" element={<AnalyticsPage />} />
-              <Route path="/settings" element={<SettingsPage />} />
-              <Route path="/help" element={<HelpPage />} />
-            </Routes>
+        {/* Logo */}
+        <div className="flex items-center gap-3 px-4 h-16 shrink-0 relative"
+          style={{ borderBottom: "1px solid var(--border)" }}>
+          <div className="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 relative"
+            style={{ background: "linear-gradient(135deg, #E53E5A, #8B1A2E)", boxShadow: "0 4px 16px rgba(229,62,90,0.4)" }}>
+            <span className="material-icons-outlined text-white text-[18px]">slideshow</span>
           </div>
+          {sidebarOpen && (
+            <div className="overflow-hidden">
+              <span className="block text-[15px] font-bold tracking-tight leading-tight whitespace-nowrap"
+                style={{ color: "var(--text-primary)", fontFamily: "'Outfit', sans-serif" }}>
+                DeckGen
+                <span style={{ color: "var(--crimson)" }}> AI</span>
+              </span>
+              <span className="block text-[10px] uppercase tracking-widest leading-tight whitespace-nowrap"
+                style={{ color: "var(--text-muted)" }}>Studio</span>
+            </div>
+          )}
         </div>
-      </main>
 
-      <footer className="app-footer">
-        <div className="footer-content">
-          <p>Powered by AI & Material Design 3 | Node + React Experience</p>
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto py-4 space-y-5 px-2">
+          {NAV.map(({ section, items }) => (
+            <div key={section}>
+              {sidebarOpen && (
+                <p className="px-3 mb-2 text-[9px] font-black uppercase tracking-[0.18em]"
+                  style={{ color: "var(--text-disabled)" }}>{section}</p>
+              )}
+              <div className="space-y-0.5">
+                {items.map(({ to, icon, label }) => (
+                  <NavLink
+                    key={to}
+                    to={to}
+                    end={to === "/"}
+                    title={!sidebarOpen ? label : undefined}
+                    className={({ isActive }) => [
+                      "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-all duration-150 relative",
+                      isActive ? "nav-active" : "nav-inactive",
+                    ].join(" ")}
+                    style={({ isActive }) => isActive ? {
+                      background: "linear-gradient(135deg, rgba(229,62,90,0.18) 0%, rgba(196,41,74,0.06) 100%)",
+                      borderLeft: "2.5px solid #E53E5A",
+                      color: "#E53E5A",
+                      boxShadow: "inset 0 0 20px rgba(229,62,90,0.05)",
+                    } : {
+                      borderLeft: "2.5px solid transparent",
+                      color: "var(--text-muted)",
+                    }}
+                  >
+                    {({ isActive }) => (
+                      <>
+                        <span className="material-icons-outlined text-[20px] shrink-0"
+                          style={{ color: isActive ? "#E53E5A" : "var(--text-muted)" }}>
+                          {icon}
+                        </span>
+                        {sidebarOpen && (
+                          <span className="truncate" style={{ color: isActive ? "#E53E5A" : "var(--text-secondary)" }}>
+                            {label}
+                          </span>
+                        )}
+                        {isActive && (
+                          <div className="absolute right-3 w-1.5 h-1.5 rounded-full"
+                            style={{ background: "#E53E5A", boxShadow: "0 0 6px rgba(229,62,90,0.8)" }} />
+                        )}
+                      </>
+                    )}
+                  </NavLink>
+                ))}
+              </div>
+            </div>
+          ))}
+        </nav>
+
+        {/* Collapse toggle */}
+        <div className="hidden lg:flex items-center justify-end px-3 py-3 shrink-0"
+          style={{ borderTop: "1px solid var(--border)" }}>
+          <button
+            onClick={() => setSidebarOpen((v) => !v)}
+            className="flex items-center justify-center w-8 h-8 rounded-lg transition-colors"
+            style={{ color: "var(--text-muted)" }}
+            onMouseEnter={e => { e.currentTarget.style.background = "rgba(229,62,90,0.1)"; e.currentTarget.style.color = "var(--crimson)"; }}
+            onMouseLeave={e => { e.currentTarget.style.background = ""; e.currentTarget.style.color = "var(--text-muted)"; }}
+            aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
+          >
+            <span className="material-icons-outlined text-[18px]">
+              {sidebarOpen ? "chevron_left" : "chevron_right"}
+            </span>
+          </button>
         </div>
-      </footer>
+      </aside>
+
+      {/* ── Main area ─────────────────────────────────────── */}
+      <div className={[
+        "flex flex-col flex-1 min-w-0 transition-[margin] duration-[260ms] ease-[cubic-bezier(0.22,1,0.36,1)]",
+        sidebarOpen ? "lg:ml-60" : "lg:ml-[68px]",
+      ].join(" ")}>
+
+        {/* Topbar */}
+        <header className="flex items-center gap-3 h-16 px-4 lg:px-6 shrink-0 z-30 sticky top-0"
+          style={{
+            background: "rgba(7,3,10,0.92)",
+            borderBottom: "1px solid var(--border)",
+            backdropFilter: "blur(16px)",
+          }}>
+          {/* Hamburger */}
+          <button
+            className="flex lg:hidden items-center justify-center w-9 h-9 rounded-xl transition-colors"
+            style={{ color: "var(--text-muted)" }}
+            onClick={() => setMobileSidebarOpen((v) => !v)}
+            aria-label="Open navigation"
+          >
+            <span className="material-icons-outlined text-[22px]">menu</span>
+          </button>
+
+          {/* Page title */}
+          <div className="flex items-center gap-2 text-sm min-w-0">
+            <div className="w-1.5 h-1.5 rounded-full shrink-0"
+              style={{ background: "var(--crimson)", boxShadow: "0 0 6px var(--crimson)" }} />
+            <span className="font-semibold truncate" style={{ color: "var(--text-primary)" }}>{pageTitle}</span>
+          </div>
+
+          <div className="flex-1" />
+
+          {/* Actions */}
+          <div className="flex items-center gap-1">
+            {[
+              { to: "/settings", icon: "tune",         title: "Settings" },
+              { to: "/help",     icon: "help_outline",  title: "Help"     },
+            ].map(({ to, icon, title }) => (
+              <NavLink key={to} to={to}
+                className="flex items-center justify-center w-9 h-9 rounded-xl transition-colors"
+                style={{ color: "var(--text-muted)" }}
+                title={title}
+                onMouseEnter={e => { e.currentTarget.style.background = "rgba(229,62,90,0.1)"; e.currentTarget.style.color = "var(--crimson)"; }}
+                onMouseLeave={e => { e.currentTarget.style.background = ""; e.currentTarget.style.color = "var(--text-muted)"; }}
+              >
+                <span className="material-icons-outlined text-[20px]">{icon}</span>
+              </NavLink>
+            ))}
+          </div>
+        </header>
+
+        {/* Page content */}
+        <main id="mainContent" role="main" className="flex-1 overflow-y-auto">
+          <Routes location={location}>
+            <Route path="/"               element={<HomePage />} />
+            <Route path="/history"        element={<HistoryPage />} />
+            <Route path="/templates"      element={<TemplatesPage />} />
+            <Route path="/themes"         element={<ThemesPage />} />
+            <Route path="/theme-creator"  element={<ThemeCreatorPage />} />
+            <Route path="/analytics"      element={<AnalyticsPage />} />
+            <Route path="/settings"       element={<SettingsPage />} />
+            <Route path="/help"           element={<HelpPage />} />
+          </Routes>
+        </main>
+      </div>
     </div>
   );
 }

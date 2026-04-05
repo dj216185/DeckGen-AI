@@ -1,43 +1,29 @@
-import { callLLM, cleanLLMResponse, repairJSON } from "./llmService.js";
+import { callLLM, extractJSON, repairJSON } from "./llmService.js";
 import { searchAssistant } from "./searchService.js";
 
 /**
  * Parse a JSON array from an LLM response with salvage mode.
+ * First tries extractJSON (which handles fences, preamble, Python literals, comments).
+ * Falls back to extracting individual slide objects if the array cannot be parsed.
  */
-function parseBatchSlidesResilient(cleaned) {
-  // Pass 1: try raw cleaned string
+function parseBatchSlidesResilient(raw) {
+  // Primary: full extraction pipeline
   try {
-    const parsed = JSON.parse(cleaned);
+    const parsed = extractJSON(raw, "array");
     if (Array.isArray(parsed)) return parsed;
-  } catch { /* continue */ }
+  } catch { /* continue to salvage */ }
 
-  // Pass 2: try after repairJSON (fixes unescaped newlines / control chars)
-  const repaired = repairJSON(cleaned);
-  try {
-    const parsed = JSON.parse(repaired);
-    if (Array.isArray(parsed)) return parsed;
-  } catch { /* continue */ }
-
-  // Pass 3: extract the outermost [...] array, then repair & parse
-  const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
-  if (arrayMatch) {
-    try {
-      const parsed = JSON.parse(repairJSON(arrayMatch[0]));
-      if (Array.isArray(parsed)) return parsed;
-    } catch { /* continue */ }
-  }
-
-  // Pass 4: salvage individual complete objects
+  // Salvage: extract individual well-formed slide objects from the raw text
   const recovered = [];
   const objPattern = /\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}/g;
   let match;
-  while ((match = objPattern.exec(cleaned)) !== null) {
+  while ((match = objPattern.exec(raw)) !== null) {
     try {
       const obj = JSON.parse(repairJSON(match[0]));
       if (typeof obj === "object" && obj !== null && obj.slide_title) {
         recovered.push(obj);
       }
-    } catch { /* skip */ }
+    } catch { /* skip malformed object */ }
   }
 
   if (recovered.length > 0) return recovered;
@@ -128,19 +114,24 @@ SLIDE TYPE GUIDE — Choose the best layout per slide:
    Second paragraph: 2–3 sentences expanding with evidence, data, or implications.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CONTENT RULES:
+CONTENT RULES — WRITE RICH, DENSE, EXPERT-LEVEL CONTENT:
 - Each slide must feel COMPLETE and SELF-CONTAINED — no "see next slide" references
 - Mix slide types across the presentation for variety (do NOT make every slide "bullets")
-- For bullets: max 5 main bullets, each under 18 words. Sub-bullets under 14 words.
-- For paragraphs: max 2 paragraphs per slide, each 2–3 sentences
-- For para_bullets: 1 paragraph (2–3 sentences) + 3–4 bullets
-- Bold emphasis (**text**) for: key statistics, named concepts, percentages, critical terms
-- NO generic filler like "This slide covers..." or "In conclusion..."
+- For bullets: 6–8 main bullets, each 18–28 words. Sub-bullets 12–20 words. Every bullet must deliver a SPECIFIC insight, stat, or actionable point — not a vague claim.
+- For paragraphs: 2–3 paragraphs per slide, each 3–5 sentences. Include data, context, cause-effect analysis.
+- For para_bullets: 1 paragraph (3–5 sentences with real depth) + 5–7 bullets
+- ALWAYS include specific data points, percentages, named technologies, real-world examples, dollar figures, timelines where relevant
+- Bold emphasis (**text**) for: key statistics, named concepts, percentages, critical terms, company names, dates
+- Sub-bullets MUST expand on the parent bullet with a concrete example, statistic, or mechanism
+- NO generic filler like "This slide covers..." or "In conclusion..." or "It is important to..."
 - NO markdown headers inside slide_content (no # lines)
 - Slide titles are handled separately — don't repeat them in slide_content
+- Treat each slide as a standalone article excerpt — every sentence earns its place
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT FORMAT — Return ONLY a valid JSON array, no extra text:
+OUTPUT FORMAT — Return ONLY a raw valid JSON array. No markdown, no code fences, no explanation before or after.
+Use double-quoted strings only. No trailing commas. No JavaScript comments.
+YOUR RESPONSE MUST START WITH [ AND END WITH ] — NOTHING ELSE.
 [
   {
     "slide_title": "exact title from slides list",
@@ -157,12 +148,9 @@ Generate ALL ${totalSlides} slides now:`;
 
   try {
     const response = await callLLM(batchPrompt, 0.75);
-    if (!response) throw new Error("Empty response from LLM");
+    if (!response?.trim()) throw new Error("Empty response from LLM");
 
-    const cleanedResponse = cleanLLMResponse(response);
-    if (!cleanedResponse.trim()) throw new Error("Empty cleaned response");
-
-    const batchSlides = parseBatchSlidesResilient(cleanedResponse);
+    const batchSlides = parseBatchSlidesResilient(response);
 
     for (const slideJson of batchSlides) {
       const titleSafe = sanitizeText(slideJson.slide_title || "Untitled");
