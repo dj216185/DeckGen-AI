@@ -120,12 +120,26 @@ Research: ${searchResults}
 Slides needed:
 ${slidesList}
 
-For each slide, write rich expert content (5-8 bullet points or 2-3 paragraphs). Include specific data, stats, examples, and bold **key terms**. Each slide must be self-contained.
+CONTENT RULES:
+- Every bullet MUST have a specific fact, number, stat, or example — no vague filler
+- Structure bullets as: **Bold Lead** — detail with data (e.g. **Revenue Growth** — 23% YoY increase driven by enterprise expansion)
+- Bold **key terms** and **numbers** for emphasis
+- Bullets: 5-8 per slide. Paragraphs: 2-3 rich paragraphs
 
-slide_type options: "bullets" (bullet list), "para_bullets" (paragraph + bullets), "paragraph" (flowing text).
+slide_type options:
+- "bullets": bullet list with data-rich points
+- "para_bullets": opening paragraph + 4-6 bullets
+- "paragraph": 2-3 flowing paragraphs for narrative
+- "chart": data visualization slide (MUST include chart_data)
 
-Output ONLY this JSON array, no other text. First character MUST be [. Last character MUST be ].
-[{"slide_title":"exact title","section":"section name","slide_type":"bullets","slide_content":"• Point one\\n• Point two","image_prompt":"keyword"}]
+For "chart" type slides, add these extra fields:
+  "chart_type": "bar" or "pie" or "line" or "doughnut"
+  "chart_data": {"labels":["Label1","Label2","Label3"],"datasets":[{"name":"Series","values":[40,35,25]}]}
+  Keep slide_content as 2-3 bullet insights about the data.
+Use "chart" for 2-3 slides where stats, comparisons, market shares, or trends are shown.
+
+Output ONLY this JSON array. First character MUST be [. Last character MUST be ].
+[{"slide_title":"exact title","section":"section name","slide_type":"bullets","slide_content":"• **Key Term** — specific data\\n• **Another** — detail","image_prompt":"keyword"}]
 
 Generate all ${totalSlides} slides:`;
 
@@ -161,13 +175,49 @@ Generate all ${totalSlides} slides:`;
       const imagePromptRaw = String(slideJson.image_prompt || "").trim();
       const imagePromptSimple = imagePromptRaw.length > 60 ? "" : imagePromptRaw;
 
-      slidesStructuredJson.push({
+      // Extract chart data if slide_type is chart
+      let chartType = null;
+      let chartData = null;
+      if (typeSafe === "chart" && slideJson.chart_data) {
+        chartType = sanitizeText(slideJson.chart_type || "bar");
+        if (!["bar", "pie", "line", "doughnut"].includes(chartType)) chartType = "bar";
+
+        const cd = slideJson.chart_data;
+        if (cd && Array.isArray(cd.labels) && cd.labels.length > 0) {
+          const datasets = Array.isArray(cd.datasets) ? cd.datasets : [];
+          const validDatasets = datasets
+            .filter(ds => ds && Array.isArray(ds.values) && ds.values.length === cd.labels.length)
+            .map(ds => ({
+              name: sanitizeText(ds.name || "Data"),
+              values: ds.values.map(v => Number(v) || 0)
+            }));
+
+          if (validDatasets.length > 0) {
+            chartData = {
+              labels: cd.labels.map(l => sanitizeText(String(l))),
+              datasets: validDatasets
+            };
+          }
+        }
+      }
+
+      const slideEntry = {
         slide_title: titleSafe,
         section: sectionSafe,
         slide_type: typeSafe,
         slide_content: contentSafe,
         image_prompt: imagePromptSimple
-      });
+      };
+
+      if (chartType && chartData) {
+        slideEntry.chart_type = chartType;
+        slideEntry.chart_data = chartData;
+      } else if (typeSafe === "chart") {
+        // LLM said chart but gave no valid data — fall back to bullets
+        slideEntry.slide_type = "bullets";
+      }
+
+      slidesStructuredJson.push(slideEntry);
     }
 
     if (echoDetected) {
@@ -232,13 +282,21 @@ Generate all ${totalSlides} slides:`;
         ? matched.slide_content
         : buildFallback(slide_title, section, userInput);
 
-      reconciledSlides.push({
+      const reconciledSlide = {
         slide_title: sanitizeText(slide_title),
         section: sanitizeText(section),
         slide_type: matched.slide_type || "bullets",
         slide_content: content,
         image_prompt: matched.image_prompt || ""
-      });
+      };
+
+      // Carry chart data through if present
+      if (matched.chart_type && matched.chart_data) {
+        reconciledSlide.chart_type = matched.chart_type;
+        reconciledSlide.chart_data = matched.chart_data;
+      }
+
+      reconciledSlides.push(reconciledSlide);
     } else {
       // No match — generate a placeholder so the slide isn't missing
       console.warn(`[generator] No match for outline slide "${slide_title}" — using fallback content`);

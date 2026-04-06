@@ -355,12 +355,17 @@ function classifyLine(raw) {
   const trimmed = line.trim();
   if (!trimmed) return { type: "blank", text: "" };
   const indent = line.length - line.trimStart().length;
-  if (indent >= 4 && /^[-*]/.test(trimmed))
-    return { type: "subbullet", text: trimmed.replace(/^[-*]\s*/, "") };
+  if (indent >= 4 && /^[-*•]/.test(trimmed))
+    return { type: "subbullet", text: trimmed.replace(/^[-*•]\s*/, "") };
+  if (/^[•]\s/.test(trimmed))
+    return { type: "bullet", text: trimmed.replace(/^[•]\s*/, "") };
   if (/^[*\-]\s/.test(trimmed))
     return { type: "bullet", text: trimmed.replace(/^[*\-]\s*/, "") };
   if (/^\d+[.)]\s/.test(trimmed))
     return { type: "bullet", text: trimmed.replace(/^\d+[.)]\s*/, "") };
+  // Lines starting with bold text pattern are likely bullet-style content
+  if (/^\*\*[^*]+\*\*\s*[—\-–:]/.test(trimmed))
+    return { type: "bullet", text: trimmed };
   return { type: "paragraph", text: trimmed };
 }
 
@@ -411,9 +416,10 @@ function extractQuote(blocks) {
 function buildTextObjects(blocks, theme) {
   if (!blocks.length) return [];
   const n = blocks.length;
-  const mainFS = n > 12 ? 13 : n > 8 ? 14 : 16;
-  const subFS = mainFS - 1;
-  const paraFS = n > 6 ? 14 : 15;
+  // Adaptive font sizes based on content density
+  const mainFS = n > 12 ? 13 : n > 8 ? 14 : n > 5 ? 15 : 16;
+  const subFS = mainFS - 1.5;
+  const paraFS = n > 6 ? 14 : n > 3 ? 15 : 16;
   const out = [];
 
   for (let bi = 0; bi < blocks.length; bi++) {
@@ -422,23 +428,64 @@ function buildTextObjects(blocks, theme) {
     const prevActive = bi > 0 && blocks[bi - 1].type !== "blank";
 
     if (b.type === "paragraph") {
-      for (const [ri, run] of parseBoldRuns(b.text).entries()) {
-        const o = { fontSize: paraFS, fontFace: theme.bodyFont, color: run.bold ? theme.bulletColor : (theme.paraColor || theme.bodyColor), bold: run.bold, lineSpacingMultiple: 1.35 };
-        if (ri === 0) { o.bullet = false; o.indentLevel = 0; o.paraSpaceBefore = isFirst ? 0 : 10; o.paraSpaceAfter = 4; }
+      const runs = parseBoldRuns(b.text);
+      for (const [ri, run] of runs.entries()) {
+        const o = {
+          fontSize: paraFS,
+          fontFace: theme.bodyFont,
+          color: run.bold ? theme.bulletColor : (theme.paraColor || theme.bodyColor),
+          bold: run.bold,
+          lineSpacingMultiple: 1.45,
+        };
+        if (ri === 0) {
+          o.bullet = false;
+          o.indentLevel = 0;
+          o.paraSpaceBefore = isFirst ? 0 : 12;
+          o.paraSpaceAfter = 6;
+        }
         out.push({ text: run.text, options: o });
       }
       if (bi < blocks.length - 1 && blocks[bi + 1].type !== "blank")
         out.push({ text: "\n", options: { fontSize: paraFS - 4, bullet: false } });
     } else if (b.type === "bullet") {
-      for (const [ri, run] of parseBoldRuns(b.text).entries()) {
-        const o = { fontSize: mainFS, fontFace: theme.bodyFont, color: run.bold ? theme.bulletColor : theme.bodyColor, bold: run.bold, lineSpacingMultiple: 1.2 };
-        if (ri === 0) { o.bullet = { code: "2022" }; o.indentLevel = 0; o.paraSpaceBefore = (isFirst || prevActive) ? 6 : 2; o.paraSpaceAfter = 2; }
+      // Detect if bullet has bold lead-in pattern: "**Term** — detail"
+      const hasBoldLead = /^\*\*[^*]+\*\*/.test(b.text);
+      const runs = parseBoldRuns(b.text);
+
+      for (const [ri, run] of runs.entries()) {
+        const isBoldLead = hasBoldLead && ri === 0 && run.bold;
+        const o = {
+          fontSize: isBoldLead ? mainFS + 0.5 : mainFS,
+          fontFace: theme.bodyFont,
+          color: run.bold ? theme.accentColor : theme.bodyColor,
+          bold: run.bold,
+          lineSpacingMultiple: 1.3,
+        };
+        if (ri === 0) {
+          o.bullet = { code: "2022" };
+          o.color = run.bold ? theme.accentColor : theme.bodyColor;
+          o.indentLevel = 0;
+          o.paraSpaceBefore = isFirst ? 4 : 8;
+          o.paraSpaceAfter = 3;
+        }
         out.push({ text: run.text, options: o });
       }
     } else if (b.type === "subbullet") {
-      for (const [ri, run] of parseBoldRuns(b.text).entries()) {
-        const o = { fontSize: subFS, fontFace: theme.bodyFont, color: run.bold ? (theme.subColor || "A0A0B0") : (theme.subColor || "9090A8"), bold: run.bold, lineSpacingMultiple: 1.15 };
-        if (ri === 0) { o.bullet = { code: "2013" }; o.indentLevel = 1; o.paraSpaceBefore = 2; o.paraSpaceAfter = 1; }
+      const runs = parseBoldRuns(b.text);
+      for (const [ri, run] of runs.entries()) {
+        const o = {
+          fontSize: subFS,
+          fontFace: theme.bodyFont,
+          color: run.bold ? (theme.bulletColor || "A0A0B0") : (theme.subColor || "9090A8"),
+          bold: run.bold,
+          lineSpacingMultiple: 1.2,
+        };
+        if (ri === 0) {
+          o.bullet = { code: "2013" };
+          o.indentLevel = 1;
+          o.paraSpaceBefore = 3;
+          o.paraSpaceAfter = 2;
+        }
         out.push({ text: run.text, options: o });
       }
     }
@@ -1106,6 +1153,171 @@ function addEndSlide_CTA(pptx, theme, tpl) {
   });
 }
 
+// ─── Chart Slides ──────────────────────────────────────────────────────────
+
+/**
+ * Map PptxGenJS chart type enum from string.
+ */
+function getChartType(pptx, chartTypeStr) {
+  const map = {
+    bar: pptx.charts.BAR,
+    pie: pptx.charts.PIE,
+    line: pptx.charts.LINE,
+    doughnut: pptx.charts.DOUGHNUT,
+  };
+  return map[chartTypeStr] || pptx.charts.BAR;
+}
+
+/**
+ * Generate an array of contrasting chart colors derived from the theme.
+ */
+function getChartColors(theme) {
+  const base = [
+    theme.accentColor,
+    theme.accent2Color,
+    theme.bulletColor,
+  ];
+  // Extra distinct colors for more data points
+  const extras = [
+    "E74C3C", "3498DB", "2ECC71", "F39C12", "9B59B6",
+    "1ABC9C", "E67E22", "34495E", "16A085", "D35400",
+  ];
+  return [...base, ...extras];
+}
+
+function addSlide_Chart(pptx, theme, slideInfo, slideNum, tpl) {
+  const slide = pptx.addSlide();
+  slide.background = theme.background;
+
+  addTopAccent(slide, pptx, theme, tpl);
+  addLeftAccent(slide, pptx, theme, tpl);
+  addBottomBar(slide, pptx, theme, tpl);
+  addDecorativeShapes(slide, pptx, theme, tpl);
+  addSlideNumber(slide, theme, slideNum);
+  addSlideTitle(slide, theme, slideInfo.slide_title);
+  addTitleUnderline(slide, pptx, theme, tpl);
+
+  const chartType = slideInfo.chart_type || "bar";
+  const chartData = slideInfo.chart_data;
+  const colors = getChartColors(theme);
+  const isPieType = chartType === "pie" || chartType === "doughnut";
+
+  if (chartData && chartData.labels && chartData.datasets) {
+    // Build PptxGenJS chart data format
+    const pptxChartData = chartData.datasets.map((ds, i) => ({
+      name: ds.name || `Series ${i + 1}`,
+      labels: chartData.labels,
+      values: ds.values,
+    }));
+
+    // Chart options
+    const chartOpts = {
+      showTitle: false,
+      showLegend: true,
+      legendPos: "b",
+      legendFontSize: 10,
+      legendColor: theme.bodyColor,
+      legendFontFace: theme.bodyFont,
+    };
+
+    if (isPieType) {
+      // Pie/Doughnut: centered chart with insights below
+      const chartW = 5.5;
+      const chartH = 4.2;
+      const chartX = (SW - chartW) / 2;
+
+      // Color each slice
+      chartOpts.chartColors = colors.slice(0, chartData.labels.length);
+      chartOpts.showPercent = true;
+      chartOpts.showValue = false;
+      chartOpts.dataLabelColor = theme.isDark ? "FFFFFF" : "333333";
+      chartOpts.dataLabelFontSize = 11;
+      chartOpts.dataLabelFontFace = theme.bodyFont;
+      chartOpts.x = chartX;
+      chartOpts.y = 1.15;
+      chartOpts.w = chartW;
+      chartOpts.h = chartH;
+
+      slide.addChart(getChartType(pptx, chartType), pptxChartData, chartOpts);
+
+      // Key insights below the chart
+      const blocks = parseContentBlocks(slideInfo.slide_content || "");
+      const textObjs = buildTextObjects(blocks, theme);
+      if (textObjs.length > 0) {
+        slide.addText(textObjs, {
+          x: MARGIN, y: 5.5, w: SW - MARGIN * 2, h: 1.4,
+          valign: "top", shrinkText: true,
+        });
+      }
+    } else {
+      // Bar/Line: chart on left, insights on right
+      const chartW = SW * 0.58;
+      const chartH = 4.8;
+      const insightX = MARGIN + chartW + 0.3;
+      const insightW = SW - insightX - MARGIN;
+
+      chartOpts.chartColors = colors.slice(0, chartData.datasets.length);
+      chartOpts.showValue = true;
+      chartOpts.dataLabelColor = theme.isDark ? "CCCCDD" : "444444";
+      chartOpts.dataLabelFontSize = 9;
+      chartOpts.dataLabelFontFace = theme.bodyFont;
+      chartOpts.dataLabelPosition = "outEnd";
+      chartOpts.catAxisLabelColor = theme.bodyColor;
+      chartOpts.catAxisLabelFontSize = 10;
+      chartOpts.catAxisLabelFontFace = theme.bodyFont;
+      chartOpts.valAxisLabelColor = theme.subColor || theme.bodyColor;
+      chartOpts.valAxisLabelFontSize = 9;
+      chartOpts.valAxisLabelFontFace = theme.bodyFont;
+      chartOpts.catGridLine = { style: "none" };
+      chartOpts.valGridLine = { color: theme.isDark ? "333344" : "E0E0E0", style: "dash", size: 0.5 };
+      chartOpts.x = MARGIN;
+      chartOpts.y = 1.15;
+      chartOpts.w = chartW;
+      chartOpts.h = chartH;
+
+      if (chartType === "bar") {
+        chartOpts.barDir = "bar";
+        chartOpts.barGapWidthPct = 80;
+      }
+
+      slide.addChart(getChartType(pptx, chartType), pptxChartData, chartOpts);
+
+      // Key insights panel on the right
+      // Accent background for insights
+      slide.addShape(pptx.ShapeType.rect, {
+        x: insightX - 0.1, y: 1.15, w: insightW + 0.2, h: chartH,
+        fill: { color: theme.accent3Color || (theme.isDark ? "1A1040" : "F5F7FA") },
+        line: { type: "none" }, rectRadius: 0.06,
+      });
+
+      slide.addText("Key Insights", {
+        x: insightX, y: 1.25, w: insightW, h: 0.4,
+        fontSize: 13, bold: true, color: theme.accentColor,
+        fontFace: theme.titleFont,
+      });
+
+      const blocks = parseContentBlocks(slideInfo.slide_content || "");
+      const textObjs = buildTextObjects(blocks, theme);
+      if (textObjs.length > 0) {
+        slide.addText(textObjs, {
+          x: insightX, y: 1.7, w: insightW, h: chartH - 0.65,
+          valign: "top", shrinkText: true,
+        });
+      }
+    }
+  } else {
+    // Fallback: no valid chart data, render as text
+    const blocks = parseContentBlocks(slideInfo.slide_content || "");
+    const textObjs = buildTextObjects(blocks, theme);
+    if (textObjs.length > 0) {
+      slide.addText(textObjs, {
+        x: MARGIN, y: 1.15, w: SW - MARGIN * 2, h: 5.75,
+        valign: "top", shrinkText: true,
+      });
+    }
+  }
+}
+
 // ─── Layout Router ──────────────────────────────────────────────────────────
 
 const LAYOUT_FNS = {
@@ -1116,6 +1328,7 @@ const LAYOUT_FNS = {
   big_number_highlight: addSlide_BigNumber,
   quote_callout: addSlide_QuoteCallout,
   full_text_with_sidebar: addSlide_TextWithSidebar,
+  chart: addSlide_Chart,
 };
 
 // ─── Exports ────────────────────────────────────────────────────────────────
@@ -1156,9 +1369,14 @@ export async function createPresentation(slidesData, outputPath, { themeName, ma
       addSectionDivider(pptx, theme, slideInfo.section, tpl);
     }
 
-    const layoutKey = tpl.layouts[layoutIdx % tpl.layouts.length];
-    const layoutFn = LAYOUT_FNS[layoutKey] || addSlide_TextLeftImageRight;
-    layoutFn(pptx, theme, slideInfo, slideNum++, tpl);
+    // Use chart layout if slide has chart data, otherwise follow template sequence
+    if (slideInfo.slide_type === "chart" && slideInfo.chart_data) {
+      addSlide_Chart(pptx, theme, slideInfo, slideNum++, tpl);
+    } else {
+      const layoutKey = tpl.layouts[layoutIdx % tpl.layouts.length];
+      const layoutFn = LAYOUT_FNS[layoutKey] || addSlide_TextLeftImageRight;
+      layoutFn(pptx, theme, slideInfo, slideNum++, tpl);
+    }
     layoutIdx++;
   }
 

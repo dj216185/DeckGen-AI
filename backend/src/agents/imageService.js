@@ -18,25 +18,89 @@ const STOPWORDS = new Set([
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /**
+ * Strip markdown noise and split into meaningful words.
+ */
+function extractWords(text) {
+  return String(text || "")
+    .replace(/\*\*/g, "")
+    .replace(/[#*_`~\[\]()•—–]/g, " ")
+    .replace(/[^\w\s]/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 2 && !STOPWORDS.has(w));
+}
+
+/**
  * Build a concise, clean image search query from slide metadata.
  */
 export function craftImageQuery(topic, imagePrompt = "", section = "") {
   // Prefer image_prompt if it's non-generic
   const source = imagePrompt?.trim() || `${topic} ${section}`;
-
-  // Strip markdown noise
-  let text = source
-    .replace(/\*\*/g, "")
-    .replace(/[#*_`~\[\]()]/g, " ")
-    .replace(/[^\w\s]/g, " ");
-
-  // Filter stopwords and short tokens
-  const words = text.toLowerCase().split(/\s+/).filter(w => w.length > 2 && !STOPWORDS.has(w));
-
-  // Cap at 5 meaningful words
+  const words = extractWords(source);
   const query = words.slice(0, 5).join(" ");
-
   return query || topic || "technology background";
+}
+
+/**
+ * Generate 3 distinct search queries for a single slide so the images are diverse.
+ * Each query approaches the slide from a different angle.
+ *
+ * @param {string} slideTitle
+ * @param {string} section
+ * @param {string} imagePrompt - LLM-generated image keyword
+ * @param {string} slideContent - the actual bullet/paragraph content
+ * @param {string} userTopic - the overall presentation topic
+ * @returns {string[]} - 3 distinct queries
+ */
+export function craftDiverseImageQueries(slideTitle, section = "", imagePrompt = "", slideContent = "", userTopic = "") {
+  const titleWords = extractWords(slideTitle);
+  const sectionWords = extractWords(section);
+  const promptWords = extractWords(imagePrompt);
+  const contentWords = extractWords(slideContent);
+  const topicWords = extractWords(userTopic);
+
+  // Deduplicate: pool of all unique words ordered by relevance
+  const seen = new Set();
+  const allWords = [];
+  for (const w of [...promptWords, ...titleWords, ...sectionWords, ...contentWords, ...topicWords]) {
+    if (!seen.has(w)) { seen.add(w); allWords.push(w); }
+  }
+
+  const queries = [];
+
+  // Query 1: image_prompt keywords + slide title (most specific)
+  const q1Words = [...new Set([...promptWords, ...titleWords])].slice(0, 5);
+  if (q1Words.length >= 2) queries.push(q1Words.join(" "));
+
+  // Query 2: section + key content words (different angle)
+  const usedInQ1 = new Set(q1Words);
+  const q2Candidates = [...sectionWords, ...contentWords].filter(w => !usedInQ1.has(w));
+  // Add 1-2 anchor words from title for relevance, then unique content words
+  const q2Words = [...titleWords.slice(0, 2), ...q2Candidates].slice(0, 5);
+  if (q2Words.length >= 2) queries.push([...new Set(q2Words)].join(" "));
+
+  // Query 3: topic + different content words (broadest, still relevant)
+  const usedSoFar = new Set([...q1Words, ...q2Words]);
+  const q3Fresh = allWords.filter(w => !usedSoFar.has(w));
+  const q3Words = [...topicWords.slice(0, 2), ...q3Fresh].slice(0, 5);
+  if (q3Words.length >= 2) queries.push([...new Set(q3Words)].join(" "));
+
+  // Fill any missing slots with variations
+  while (queries.length < 3) {
+    // Shift window over allWords to create variety
+    const offset = queries.length * 3;
+    const fallback = allWords.slice(offset, offset + 5).join(" ");
+    queries.push(fallback || userTopic || slideTitle || "professional presentation");
+  }
+
+  // Deduplicate queries — if two ended up identical, tweak the duplicate
+  for (let i = 1; i < queries.length; i++) {
+    if (queries[i] === queries[i - 1] || !queries[i].trim()) {
+      queries[i] = `${userTopic} ${slideTitle}`.replace(/[^\w\s]/g, " ").trim().split(/\s+/).slice(0, 5).join(" ") + ` ${i}`;
+    }
+  }
+
+  return queries.slice(0, 3);
 }
 
 /**
@@ -163,6 +227,71 @@ export async function fetchSlideImage(query, outDir, safeBasename) {
 }
 
 /**
+ * Fetch 3 diverse images for a slide using different search queries.
+ * Each image comes from a different query so they look genuinely different.
+ *
+ * @param {string[]} queries - 3 distinct search queries
+ * @param {string} outDir - local dir to save images
+ * @param {string} safeBasename - filename prefix
+ * @returns {Promise<string[]>} - array of local file paths (up to 3)
+ */
+export async function fetchSlideImageOptions(queries, outDir, safeBasename) {
+  if (!queries?.length) return [];
+
+  const results = [];
+  const usedDomains = new Set(); // avoid same-site duplicates
+
+  for (let q = 0; q < queries.length; q++) {
+    const query = queries[q];
+    if (!query?.trim()) continue;
+
+    try {
+      const urls = await searchDdgImages(query, 12);
+
+      for (const url of urls) {
+        // Skip URLs from domains we already downloaded from
+        try {
+          const domain = new URL(url).hostname;
+          if (usedDomains.has(domain)) continue;
+        } catch { /* ignore parse errors */ }
+
+        const filePath = await downloadImage(url, outDir, `${safeBasename}_opt${results.length}`);
+        if (filePath) {
+          try { usedDomains.add(new URL(url).hostname); } catch {}
+          results.push(filePath);
+          console.log(`[imageService] ✓ Option ${results.length}/3 for "${query}" → ${path.basename(filePath)}`);
+          break; // one image per query
+        }
+      }
+    } catch (err) {
+      console.warn(`[imageService] ✗ Query ${q + 1} failed for "${query}": ${err.message}`);
+    }
+  }
+
+  // If we still have fewer than 3, try more results from the first query as fallback
+  if (results.length < 3 && queries[0]?.trim()) {
+    try {
+      const urls = await searchDdgImages(queries[0], 20);
+      for (const url of urls) {
+        if (results.length >= 3) break;
+        try {
+          const domain = new URL(url).hostname;
+          if (usedDomains.has(domain)) continue;
+        } catch {}
+        const filePath = await downloadImage(url, outDir, `${safeBasename}_opt${results.length}_fb`);
+        if (filePath) {
+          try { usedDomains.add(new URL(url).hostname); } catch {}
+          results.push(filePath);
+        }
+      }
+    } catch {}
+  }
+
+  console.log(`[imageService] ✓ ${results.length}/3 diverse options for slide "${safeBasename}"`);
+  return results;
+}
+
+/**
  * Fetch images for all slides in parallel (with concurrency cap).
  *
  * @param {Array<{slide_title, image_prompt, section}>} slides
@@ -193,6 +322,49 @@ export async function fetchAllSlideImages(slides, outDir, concurrency = 3) {
   }
 
   // Run N workers in parallel
+  await Promise.all(Array.from({ length: concurrency }, worker));
+  return results;
+}
+
+/**
+ * Fetch 3 diverse image options for all slides (for review/selection).
+ *
+ * @param {Array<{slide_title, image_prompt, section, slide_content}>} slides
+ * @param {string} outDir
+ * @param {number} concurrency
+ * @param {string} userTopic - the overall presentation topic
+ * @returns {Promise<Map<string, string[]>>} - map of slide_title → [filePath1, filePath2, filePath3]
+ */
+export async function fetchAllSlideImageOptions(slides, outDir, concurrency = 2, userTopic = "") {
+  const results = new Map();
+  const queue = [...slides];
+
+  async function worker() {
+    while (queue.length > 0) {
+      const slide = queue.shift();
+      if (!slide) continue;
+
+      const safeBase = (slide.slide_title || "slide")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "_")
+        .replace(/^_+|_+$/g, "")
+        .slice(0, 40);
+
+      // Generate 3 diverse search queries for this slide
+      const queries = craftDiverseImageQueries(
+        slide.slide_title,
+        slide.section,
+        slide.image_prompt,
+        slide.slide_content,
+        userTopic
+      );
+      console.log(`[imageService] Slide "${slide.slide_title}" queries: ${queries.map(q => `"${q}"`).join(", ")}`);
+
+      const paths = await fetchSlideImageOptions(queries, outDir, safeBase);
+      results.set(slide.slide_title, paths);
+    }
+  }
+
   await Promise.all(Array.from({ length: concurrency }, worker));
   return results;
 }

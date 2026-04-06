@@ -65,6 +65,7 @@ function statusPayload(task) {
     response.filename = task.filename;
     response.slide_count = task.slide_count;
     response.has_search_file = Boolean(task.search_file || task.search_info);
+    response.has_review_data = Boolean(task.slides_review_data?.length);
   }
 
   return response;
@@ -335,6 +336,86 @@ app.delete("/api/tasks/:task_id", (req, res) => {
   const ok = deleteTask(req.params.task_id);
   if (!ok) return res.status(404).json({ error: "Task not found" });
   return res.json({ success: true });
+});
+
+// ─── Review & Finalize ─────────────────────────────────────────────────────
+
+// Get review data (slides + image options)
+app.get("/api/tasks/:task_id/review", (req, res) => {
+  const task = getTask(req.params.task_id);
+  if (!task) return res.status(404).json({ error: "Task not found" });
+  if (task.status !== "completed") return res.status(400).json({ error: "Task not ready for review" });
+  if (!task.slides_review_data) return res.status(404).json({ error: "No review data available" });
+
+  return res.json({
+    slides: task.slides_review_data,
+    main_title: task.main_title || task.user_query,
+    theme: task.theme_name || task.theme,
+    template: task.template_name || task.template,
+  });
+});
+
+// Serve an image from the task's image cache
+app.get("/api/tasks/:task_id/images/:filename", (req, res) => {
+  const task = getTask(req.params.task_id);
+  if (!task) return res.status(404).json({ error: "Task not found" });
+  if (!task.image_cache_dir) return res.status(404).json({ error: "No images available" });
+
+  const filename = path.basename(req.params.filename); // prevent path traversal
+  const filePath = path.join(task.image_cache_dir, filename);
+
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: "Image not found" });
+
+  const ext = path.extname(filePath).toLowerCase();
+  const mimeMap = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp", ".gif": "image/gif" };
+  res.setHeader("Content-Type", mimeMap[ext] || "image/jpeg");
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  return fs.createReadStream(filePath).pipe(res);
+});
+
+// Finalize: apply image selections and rebuild PPTX
+app.post("/api/tasks/:task_id/finalize", async (req, res) => {
+  const task = getTask(req.params.task_id);
+  if (!task) return res.status(404).json({ error: "Task not found" });
+  if (task.status !== "completed") return res.status(400).json({ error: "Task not ready" });
+  if (!task.slides_review_data || !task.image_cache_dir) {
+    return res.status(400).json({ error: "No review data for this task" });
+  }
+
+  const selections = req.body.selections || {}; // { slideIndex: imageOptionIndex }
+
+  try {
+    // Rebuild slides with selected images
+    const updatedSlides = task.slides_review_data.map((slide, idx) => {
+      const selectedIdx = selections[String(idx)] != null ? Number(selections[String(idx)]) : slide.selected_image;
+      const imgFile = slide.image_options[selectedIdx] || slide.image_options[0] || null;
+      const imgPath = imgFile ? path.join(task.image_cache_dir, imgFile) : null;
+
+      // Update the stored selection
+      slide.selected_image = selectedIdx;
+
+      return {
+        ...slide,
+        image_path: imgPath && fs.existsSync(imgPath) ? imgPath : null,
+      };
+    });
+
+    // Rebuild PPTX
+    const { createPresentation } = await import("./agents/pptxCreator.js");
+    const pptxFile = task.pptx_file;
+
+    await createPresentation(updatedSlides, pptxFile, {
+      themeName: task.theme_name || task.theme,
+      mainTitle: task.main_title || task.user_query,
+      templateName: task.template_name || task.template,
+    });
+
+    console.log(`[finalize] Rebuilt PPTX with updated image selections → ${pptxFile}`);
+    return res.json({ success: true, filename: task.filename });
+  } catch (err) {
+    console.error("[finalize] Error rebuilding PPTX:", err.message);
+    return res.status(500).json({ error: "Failed to rebuild presentation" });
+  }
 });
 
 // ─── Start ──────────────────────────────────────────────────────────────────

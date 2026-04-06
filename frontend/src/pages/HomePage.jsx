@@ -4,6 +4,7 @@ import {
   getConfig, getStatus, getThemes, getTemplates,
   startGeneration, getDownloadUrl, getDownloadSearchUrl,
 } from "../api";
+import ReviewModal from "./ReviewModal";
 
 // ─── Stage pipeline ──────────────────────────────────────────────────────────
 const STAGES = [
@@ -68,10 +69,12 @@ export default function HomePage() {
   const [templates,   setTemplates]   = useState([]);
   const [limits,      setLimits]      = useState({ min: 10, max: 15 });
 
-  const [taskId,   setTaskId]   = useState("");
-  const [status,   setStatus]   = useState(null);
-  const [busy,     setBusy]     = useState(false);
-  const [error,    setError]    = useState("");
+  const [taskId,      setTaskId]      = useState("");
+  const [status,      setStatus]      = useState(null);
+  const [busy,        setBusy]        = useState(false);
+  const [error,       setError]       = useState("");
+  const [showReview,  setShowReview]  = useState(false);
+  const [reviewed,    setReviewed]    = useState(false);
   const pollRef  = useRef(0);
   const aliveRef = useRef(true);
 
@@ -166,6 +169,7 @@ export default function HomePage() {
       setBusy(true);
       setStatus(null);
       setTaskId("");
+      setReviewed(false);
       const bounded = Math.max(limits.min, Math.min(limits.max, Number(slideCount) || limits.max));
       setSlideCount(bounded);
       const data = await startGeneration({ topic: topic.trim(), project_info: projectInfo.trim(), theme, slide_count: bounded, template });
@@ -177,7 +181,7 @@ export default function HomePage() {
     }
   };
 
-  const resetPanel = () => { setStatus(null); setTaskId(""); setError(""); setBusy(false); };
+  const resetPanel = () => { setStatus(null); setTaskId(""); setError(""); setBusy(false); setReviewed(false); };
 
   const outlineEntries = useMemo(() => Object.entries(status?.outline || {}), [status?.outline]);
 
@@ -686,23 +690,92 @@ export default function HomePage() {
                 </div>
               ) : null}
 
-              {/* Downloads */}
-              {isDone && taskId && (
-                <div className="grid sm:grid-cols-2 gap-3 pt-2">
-                  <a href={getDownloadUrl(taskId)} download
-                    className="btn-primary flex items-center justify-center gap-2 no-underline text-[14px]"
-                    style={{ height: "48px", borderRadius: "1rem" }}>
-                    <span className="material-icons-outlined text-[18px]">download</span>
-                    Download PPTX
-                  </a>
-                  <a href={getDownloadSearchUrl(taskId, "pdf")} download
-                    className="btn-ghost flex items-center justify-center gap-2 no-underline text-[14px]"
-                    style={{ height: "48px", borderRadius: "1rem" }}>
-                    <span className="material-icons-outlined text-[18px]">analytics</span>
-                    Research PDF
-                  </a>
+              {/* Step 1: Review (shown when done but not yet reviewed) */}
+              {isDone && taskId && !reviewed && (
+                <div className="space-y-3 pt-2">
+                  <p className="text-center text-[13px]" style={{ color: "var(--text-muted)" }}>
+                    Review your slides and choose images before downloading
+                  </p>
                   <button type="button"
-                    className="btn-ghost sm:col-span-2 text-[14px]"
+                    onClick={() => setShowReview(true)}
+                    className="w-full flex items-center justify-center gap-2 text-[15px] font-bold transition-all"
+                    style={{
+                      height: "52px", borderRadius: "1rem",
+                      background: "linear-gradient(135deg, #E53E5A, #C4294A)",
+                      border: "1.5px solid rgba(229,62,90,0.6)",
+                      color: "#fff", cursor: "pointer",
+                      boxShadow: "0 4px 20px rgba(229,62,90,0.3)",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.boxShadow = "0 6px 28px rgba(229,62,90,0.45)";
+                      e.currentTarget.style.transform = "translateY(-1px)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.boxShadow = "0 4px 20px rgba(229,62,90,0.3)";
+                      e.currentTarget.style.transform = "translateY(0)";
+                    }}
+                  >
+                    <span className="material-icons-outlined text-[20px]">rate_review</span>
+                    Review & Choose Images
+                  </button>
+
+                  <button type="button"
+                    className="w-full flex items-center justify-center gap-2 text-[13px] transition-all"
+                    style={{
+                      height: "40px", borderRadius: "0.75rem",
+                      background: "transparent", border: "none",
+                      color: "var(--text-muted)", cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-secondary)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+                    onClick={() => setReviewed(true)}
+                  >
+                    Skip review & download directly
+                  </button>
+                </div>
+              )}
+
+              {/* Step 2: Downloads (shown after review or skip) */}
+              {isDone && taskId && reviewed && (
+                <div className="space-y-3 pt-2">
+                  <button type="button"
+                    onClick={() => setShowReview(true)}
+                    className="w-full flex items-center justify-center gap-2 text-[13px] font-semibold transition-all"
+                    style={{
+                      height: "40px", borderRadius: "0.75rem",
+                      background: "rgba(229,62,90,0.08)",
+                      border: "1px solid rgba(229,62,90,0.2)",
+                      color: "#E53E5A", cursor: "pointer",
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = "rgba(229,62,90,0.14)";
+                      e.currentTarget.style.borderColor = "rgba(229,62,90,0.35)";
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = "rgba(229,62,90,0.08)";
+                      e.currentTarget.style.borderColor = "rgba(229,62,90,0.2)";
+                    }}
+                  >
+                    <span className="material-icons-outlined text-[16px]">rate_review</span>
+                    Re-review Images
+                  </button>
+
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <a href={getDownloadUrl(taskId)} download
+                      className="btn-primary flex items-center justify-center gap-2 no-underline text-[14px]"
+                      style={{ height: "48px", borderRadius: "1rem" }}>
+                      <span className="material-icons-outlined text-[18px]">download</span>
+                      Download PPTX
+                    </a>
+                    <a href={getDownloadSearchUrl(taskId, "pdf")} download
+                      className="btn-ghost flex items-center justify-center gap-2 no-underline text-[14px]"
+                      style={{ height: "48px", borderRadius: "1rem" }}>
+                      <span className="material-icons-outlined text-[18px]">analytics</span>
+                      Research PDF
+                    </a>
+                  </div>
+                  <button type="button"
+                    className="btn-ghost w-full text-[14px]"
                     style={{ height: "44px", borderRadius: "1rem" }}
                     onClick={resetPanel}>
                     <span className="material-icons-outlined text-[18px]">add_circle_outline</span>
@@ -739,6 +812,11 @@ export default function HomePage() {
       <div className="sr-only" aria-live="polite" aria-atomic="true">
         {status?.message || "Ready"}
       </div>
+
+      {/* Review Modal */}
+      {showReview && taskId && (
+        <ReviewModal taskId={taskId} onClose={() => setShowReview(false)} onFinalized={() => setReviewed(true)} />
+      )}
     </div>
   );
 }

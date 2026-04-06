@@ -111,6 +111,13 @@ export function createTask({ user_query, project_info, theme, slide_count, templ
         t.slide_count = Number(evt.slide_count || t.slide_count);
         t.actual_time = Number(evt.actual_time || 0);
 
+        // Review data for image selection
+        t.image_cache_dir = evt.image_cache_dir || null;
+        t.slides_review_data = evt.slides_review_data || null;
+        t.theme_name = evt.theme_name || t.theme;
+        t.template_name = evt.template_name || t.template;
+        t.main_title = evt.main_title || t.user_query;
+
         if (evt.search_info && !t.search_info) {
           t.search_info = evt.search_info;
           t.search_file = createSearchFile(t, evt.search_info);

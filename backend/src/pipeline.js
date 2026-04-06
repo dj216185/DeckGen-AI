@@ -5,7 +5,7 @@ import { slideOutlineAgent } from "./agents/slideOutlineAgent.js";
 import { generatorAgent } from "./agents/generatorAgent.js";
 import { reviewerAgent } from "./agents/reviewerAgent.js";
 import { createPresentation } from "./agents/pptxCreator.js";
-import { fetchAllSlideImages, craftImageQuery } from "./agents/imageService.js";
+import { fetchAllSlideImageOptions } from "./agents/imageService.js";
 
 function getSafeFilename(text) {
   return String(text || "presentation")
@@ -90,24 +90,27 @@ export async function runPipeline({ taskId, topic, projectInfo, theme, template,
       throw new Error("No slides were generated");
     }
 
-    // ── Stage 6: Fetch Images ─────────────────────────────────────────────────
-    console.log(`[pipeline] Fetching slide images from DuckDuckGo...`);
-    emit({ type: "progress", progress: 87, stage: "images", message: "Fetching images for slides...", current_stage_name: "Fetching Images" });
+    // ── Stage 6: Fetch Images (3 options per slide for review) ─────────────
+    console.log(`[pipeline] Fetching slide image options from DuckDuckGo...`);
+    emit({ type: "progress", progress: 87, stage: "images", message: "Fetching image options for slides...", current_stage_name: "Fetching Images" });
 
     const imagesTmpDir = path.join(PROJECT_ROOT, "output_final", ".img_cache", taskId);
-    let imageMap = new Map();
+    let imageOptionsMap = new Map();
 
     try {
-      imageMap = await fetchAllSlideImages(reviewedSlides, imagesTmpDir, 3);
-      const fetched = [...imageMap.values()].filter(Boolean).length;
-      console.log(`[pipeline] Images fetched: ${fetched}/${reviewedSlides.length}`);
+      imageOptionsMap = await fetchAllSlideImageOptions(reviewedSlides, imagesTmpDir, 2, topic);
+      const fetched = [...imageOptionsMap.values()].filter(a => a.length > 0).length;
+      console.log(`[pipeline] Image options fetched for ${fetched}/${reviewedSlides.length} slides`);
     } catch (imgErr) {
       console.warn(`[pipeline] Image fetch failed (will continue without images): ${imgErr.message}`);
     }
 
-    // Attach image paths to slides
+    // Attach image options to slides; default to first option
     for (const slide of reviewedSlides) {
-      slide.image_path = imageMap.get(slide.slide_title) || null;
+      const options = imageOptionsMap.get(slide.slide_title) || [];
+      slide.image_options = options;
+      slide.selected_image = 0;
+      slide.image_path = options[0] || null;
     }
 
     // ── Stage 7: Build PPTX ───────────────────────────────────────────────────
@@ -128,9 +131,7 @@ export async function runPipeline({ taskId, topic, projectInfo, theme, template,
     // Generate PPTX (slides now have image_path attached)
     await createPresentation(reviewedSlides, pptxFile, { themeName: theme, mainTitle: topic, templateName: template });
 
-    // Cleanup temp image cache
-    try { fs.rmSync(imagesTmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-
+    // Keep image cache for review — will be cleaned up on finalize or task delete
     const actualTime = Math.round((Date.now() - startTime) / 1000);
     console.log(`[pipeline] ✓ Completed in ${actualTime}s — ${reviewedSlides.length} slides → ${pptxFile}`);
 
@@ -141,7 +142,22 @@ export async function runPipeline({ taskId, topic, projectInfo, theme, template,
       filename: path.basename(pptxFile),
       slide_count: reviewedSlides.length,
       actual_time: actualTime,
-      search_info: state.search_reference || ""
+      search_info: state.search_reference || "",
+      // Review data
+      image_cache_dir: imagesTmpDir,
+      slides_review_data: reviewedSlides.map((s, i) => ({
+        index: i,
+        slide_title: s.slide_title,
+        section: s.section,
+        slide_type: s.slide_type,
+        slide_content: (s.slide_content || "").slice(0, 300),
+        image_options: (s.image_options || []).map(p => path.basename(p)),
+        selected_image: s.selected_image || 0,
+        has_chart: Boolean(s.chart_data),
+      })),
+      theme_name: theme,
+      template_name: template,
+      main_title: topic,
     });
 
   } catch (err) {

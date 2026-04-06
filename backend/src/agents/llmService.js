@@ -25,7 +25,7 @@ export async function callLLM(prompt, temperature = 0.7) {
   const client = getClient();
   const model = client.getGenerativeModel({
     model: MODEL_NAME,
-    generationConfig: { temperature, maxOutputTokens: 8192 },
+    generationConfig: { temperature, maxOutputTokens: 16384 },
   });
 
   const timeoutPromise = new Promise((_, reject) =>
@@ -281,6 +281,101 @@ export function repairJSON(raw) {
 }
 
 /**
+ * Strip only markdown fences from LLM output, without trimming at last bracket.
+ * Used for truncated JSON where the aggressive cleanLLMResponse would cut valid data.
+ */
+function stripFencesOnly(raw) {
+  let s = raw.replace(/^\uFEFF/, "").trim();
+  const fenced = s.match(/```(?:json|JSON|js|javascript)?\s*([\s\S]*?)\s*```/);
+  if (fenced) return fenced[1].trim();
+  s = s.replace(/^```(?:json|JSON|js|javascript)?\s*/m, "").replace(/\s*```\s*$/m, "").trim();
+  // Strip leading prose before first { or [
+  const fb = s.indexOf("{");
+  const fl = s.indexOf("[");
+  let start = -1;
+  if (fb === -1) start = fl;
+  else if (fl === -1) start = fb;
+  else start = Math.min(fb, fl);
+  if (start > 0) s = s.slice(start);
+  return s;
+}
+
+/**
+ * Scan a string and return { inString, stack } describing nesting state.
+ */
+function scanJSONState(s) {
+  let inString = false;
+  let escaped = false;
+  const stack = [];
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === "\\") { escaped = true; continue; }
+    if (inString) { if (ch === '"') inString = false; continue; }
+    if (ch === '"') { inString = true; continue; }
+    if (ch === '{' || ch === '[') { stack.push(ch); continue; }
+    if (ch === '}') { if (stack.length && stack[stack.length - 1] === '{') stack.pop(); continue; }
+    if (ch === ']') { if (stack.length && stack[stack.length - 1] === '[') stack.pop(); continue; }
+  }
+  return { inString, stack };
+}
+
+/**
+ * Attempt to repair truncated JSON by closing unclosed strings, arrays, and objects.
+ * Works best when the JSON was cut off mid-stream (e.g. LLM hit token limit).
+ */
+function repairTruncatedJSON(raw) {
+  if (!raw) return raw;
+  let s = raw.trim();
+
+  const { inString, stack } = scanJSONState(s);
+
+  // Already well-formed
+  if (!inString && stack.length === 0) return s;
+
+  // Close unclosed string
+  if (inString) s += '"';
+
+  // Attempt 1: remove trailing comma and close all brackets
+  let attempt = s.replace(/,\s*$/, "");
+  const closers = [...stack].reverse().map(c => c === '{' ? '}' : ']').join('');
+  attempt += closers;
+
+  try { JSON.parse(attempt); return attempt; } catch { /* continue */ }
+
+  // Attempt 2: the partial element can't just be closed — truncate it.
+  // Find the last top-level comma (depth 1) and cut there, then close brackets.
+  let depth = 0;
+  let inStr2 = false;
+  let esc2 = false;
+  let lastTopComma = -1;
+
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (esc2) { esc2 = false; continue; }
+    if (ch === "\\") { esc2 = true; continue; }
+    if (inStr2) { if (ch === '"') inStr2 = false; continue; }
+    if (ch === '"') { inStr2 = true; continue; }
+    if (ch === '{' || ch === '[') { depth++; continue; }
+    if (ch === '}' || ch === ']') { depth--; continue; }
+    if (ch === ',' && depth === 1) lastTopComma = i;
+  }
+
+  if (lastTopComma > 0) {
+    s = s.slice(0, lastTopComma).trim();
+    const st2 = scanJSONState(s);
+    if (st2.inString) s += '"';
+    s = s.replace(/,\s*$/, "");
+    const closers2 = [...st2.stack].reverse().map(c => c === '{' ? '}' : ']').join('');
+    s += closers2;
+    try { JSON.parse(s); return s; } catch { /* fall through */ }
+  }
+
+  // Attempt 3: fallback — return the first attempt (may still fail upstream)
+  return attempt;
+}
+
+/**
  * Parse a markdown bullet-list outline into a JSON object.
  * Handles smaller models that output markdown instead of JSON, e.g.:
  *   * **Section Name**
@@ -390,7 +485,40 @@ export function extractJSON(raw, expectedType) {
     // Strategy 2: clean + single-quote convert + parse
     () => JSON.parse(repairJSON(convertSingleQuotes(cleanLLMResponse(raw)))),
 
-    // Strategy 3: extract outermost array or object directly from raw, then repair
+    // Strategy 3: merge multiple concatenated JSON objects
+    // Some models output {obj1} {obj2} instead of one combined object.
+    // Must run BEFORE the extract-outermost strategies which would discard the second object.
+    () => {
+      const stripped = stripFencesOnly(raw);
+      // Split on }...{ boundary (closing brace, optional whitespace/comma, opening brace)
+      const parts = stripped.split(/\}\s*[,]?\s*\{/);
+      if (parts.length < 2) throw new Error("Not multiple objects");
+
+      console.warn(`[extractJSON] Merging ${parts.length} concatenated JSON objects`);
+      const merged = {};
+      for (let i = 0; i < parts.length; i++) {
+        let chunk = parts[i];
+        // Re-add braces stripped by split
+        if (i > 0) chunk = "{" + chunk;
+        if (i < parts.length - 1) chunk = chunk + "}";
+        // The last chunk might be truncated — try repair
+        let parsed;
+        try {
+          parsed = JSON.parse(repairJSON(chunk));
+        } catch {
+          try {
+            parsed = JSON.parse(repairTruncatedJSON(repairJSON(chunk)));
+          } catch { continue; }
+        }
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          Object.assign(merged, parsed);
+        }
+      }
+      if (Object.keys(merged).length === 0) throw new Error("No valid objects after merge");
+      return merged;
+    },
+
+    // Strategy 4: extract outermost array or object directly from raw, then repair
     () => {
       const cleaned = cleanLLMResponse(raw);
       const pattern = expectedType === "array"
@@ -403,7 +531,7 @@ export function extractJSON(raw, expectedType) {
       return JSON.parse(repairJSON(m[0]));
     },
 
-    // Strategy 4: same as 3 but with single-quote conversion
+    // Strategy 5: same as 4 but with single-quote conversion
     () => {
       const cleaned = convertSingleQuotes(cleanLLMResponse(raw));
       const pattern = expectedType === "array" ? /\[[\s\S]*\]/ : /\{[\s\S]*\}/;
@@ -412,7 +540,23 @@ export function extractJSON(raw, expectedType) {
       return JSON.parse(repairJSON(m[0]));
     },
 
-    // Strategy 5: markdown outline → JSON object
+    // Strategy 6: repair truncated JSON (LLM hit token limit mid-output)
+    // Uses stripFencesOnly (not cleanLLMResponse) to avoid trimming at last bracket.
+    () => {
+      const stripped = stripFencesOnly(raw);
+      const repaired = repairTruncatedJSON(repairJSON(stripped));
+      console.warn("[extractJSON] Attempting truncated JSON repair");
+      return JSON.parse(repaired);
+    },
+
+    // Strategy 7: truncated repair with single-quote conversion
+    () => {
+      const stripped = convertSingleQuotes(stripFencesOnly(raw));
+      const repaired = repairTruncatedJSON(repairJSON(stripped));
+      return JSON.parse(repaired);
+    },
+
+    // Strategy 8: markdown outline → JSON object
     // Handles smaller models that ignore JSON instructions and return markdown lists.
     // e.g. "* **Section Name**\n  * Slide Title\n  * Slide Title"
     // Only applies when an object is expected (slide outline use-case).
