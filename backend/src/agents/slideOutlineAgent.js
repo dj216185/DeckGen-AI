@@ -114,16 +114,14 @@ Content Optimization:
 - Avoid generic titles
 - Break complex concepts into multiple digestible slides
 
-Output Format:
-- Return ONLY raw valid JSON — no markdown, no code fences, no explanation before or after
-- Use double-quoted strings only (no single quotes)
-- No trailing commas, no JavaScript comments
-- Example:
-{
-    "Section A": ["Focused Slide 1", "Specific Slide 2"],
-    "Section B": ["Clear Point 1", "Distinct Point 2"]
-}
-YOUR RESPONSE MUST START WITH { AND END WITH } — NOTHING ELSE.`;
+STRICT OUTPUT FORMAT — READ CAREFULLY:
+- Output ONLY a raw JSON object. Nothing else. No preamble, no explanation, no bullet lists, no markdown.
+- DO NOT repeat or summarize the instructions. DO NOT use * or # or - formatting.
+- The VERY FIRST character of your response must be { and the VERY LAST character must be }.
+- Use double-quoted keys and values only. No single quotes. No trailing commas.
+- Exact required format:
+{"Section A":["Slide Title 1","Slide Title 2"],"Section B":["Slide Title 3","Slide Title 4"]}
+YOUR RESPONSE MUST START WITH { AND END WITH } — NO EXCEPTIONS.`;
 
   const raw = await callLLM(prompt, 0.7);
   if (!raw?.trim()) throw new Error("LLM returned empty response for slide outline");

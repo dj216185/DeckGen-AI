@@ -281,6 +281,97 @@ export function repairJSON(raw) {
 }
 
 /**
+ * Parse a markdown bullet-list outline into a JSON object.
+ * Handles smaller models that output markdown instead of JSON, e.g.:
+ *   * **Section Name**
+ *     * Slide Title 1
+ *     * Slide Title 2
+ * Also handles: "* *Section:*", "## Section", "- Section:", indented items.
+ */
+function parseMarkdownOutline(raw) {
+  const lines = raw.split("\n");
+  const result = {};
+  let currentSection = null;
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+
+    // Detect indentation — indented lines are slide items, not section headers
+    const isIndented = line.startsWith("  ") || line.startsWith("\t");
+
+    // Strip all markdown formatting from a string
+    const strip = (s) => s.replace(/\*+/g, "").replace(/#+/g, "").replace(/:+$/, "").trim();
+
+    // ── Section header detection ──────────────────────────────────────────
+    // Patterns (all non-indented):
+    //   * **Section Name** or * *Section Name*
+    //   **Section Name** or *Section Name*
+    //   ## Section Name
+    //   * Section Name:  (bullet ending in colon)
+    //   Section Name:    (plain text ending in colon)
+    let sectionName = null;
+    if (!isIndented) {
+      const patterns = [
+        /^\*\s+\*{1,2}(.+?)\*{0,2}\s*:?\s*$/,  // * **Title** or * *Title*
+        /^\*{1,2}(.+?)\*{0,2}\s*:?\s*$/,        // **Title** or *Title*
+        /^#+\s+(.+)/,                            // ## Title
+        /^[-*]\s+([^*].+?):\s*$/,               // * Title:
+        /^([A-Z][^a-z]{3,}.+?):\s*$/,           // SECTION NAME: (all-caps-ish)
+      ];
+      for (const pat of patterns) {
+        const m = trimmed.match(pat);
+        if (m) {
+          const candidate = strip(m[1]);
+          // Must be a non-trivial string that looks like a section (not a slide title mixed in)
+          if (candidate.length > 2 && candidate.length < 80) {
+            sectionName = candidate;
+            break;
+          }
+        }
+      }
+    }
+
+    if (sectionName) {
+      currentSection = sectionName;
+      if (!result[currentSection]) result[currentSection] = [];
+      continue;
+    }
+
+    // ── Slide item detection ──────────────────────────────────────────────
+    // Patterns: "  * Title", "  - Title", "    * Title", plain indented text
+    if (currentSection) {
+      let slideTitle = null;
+      const slidePatterns = [
+        /^[-*]\s+(.+)/,   // - Title or * Title (also catches un-indented sub-items)
+      ];
+      for (const pat of slidePatterns) {
+        const m = trimmed.match(pat);
+        if (m) {
+          slideTitle = strip(m[1]);
+          break;
+        }
+      }
+      // Plain indented text with no bullet
+      if (!slideTitle && isIndented && trimmed.length > 2) {
+        slideTitle = strip(trimmed);
+      }
+
+      if (slideTitle && slideTitle.length > 2 && slideTitle.length < 120) {
+        result[currentSection].push(slideTitle);
+      }
+    }
+  }
+
+  // Remove empty sections
+  for (const k of Object.keys(result)) {
+    if (result[k].length === 0) delete result[k];
+  }
+
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
  * Full JSON extraction pipeline: clean → repair → parse.
  * Falls back through several strategies before giving up.
  *
@@ -319,6 +410,17 @@ export function extractJSON(raw, expectedType) {
       const m = cleaned.match(pattern);
       if (!m) throw new Error("No JSON structure found after quote conversion");
       return JSON.parse(repairJSON(m[0]));
+    },
+
+    // Strategy 5: markdown outline → JSON object
+    // Handles smaller models that ignore JSON instructions and return markdown lists.
+    // e.g. "* **Section Name**\n  * Slide Title\n  * Slide Title"
+    // Only applies when an object is expected (slide outline use-case).
+    () => {
+      if (expectedType !== "object") throw new Error("Markdown fallback only for objects");
+      const result = parseMarkdownOutline(raw);
+      if (!result || Object.keys(result).length === 0) throw new Error("No markdown outline found");
+      return result;
     },
   ];
 
