@@ -39,6 +39,39 @@ function sanitizeText(text) {
 }
 
 /**
+ * Detect if slide content is contaminated with echoed prompt/instruction text.
+ * Returns true if the content looks like it contains instructions rather than real content.
+ */
+const ECHO_PATTERNS = [
+  /slide.type.guide/i,
+  /content.rules/i,
+  /output.format/i,
+  /you are a (senior |expert )?presentation/i,
+  /generate all \d+ slides/i,
+  /first character must be/i,
+  /no markdown.*no code fences/i,
+  /return only.*json/i,
+  /no trailing commas/i,
+  /use double.quoted strings/i,
+  /your response must start with/i,
+  /write rich.*expert.*content/i,
+  /each slide must be self.contained/i,
+  /bold emphasis.*\*\*text\*\*/i,
+  /no generic filler/i,
+  /standalone article excerpt/i,
+];
+
+function isEchoedContent(content) {
+  if (!content || content.length < 30) return false;
+  let hits = 0;
+  for (const pat of ECHO_PATTERNS) {
+    if (pat.test(content)) hits++;
+    if (hits >= 2) return true;  // 2+ pattern matches = very likely echoed
+  }
+  return false;
+}
+
+/**
  * Run the generator agent - calls Perplexity for research then Gemini for slides.
  * @param {object} state
  * @returns {Promise<{ generated_slides_json: object[], search_reference: string }>}
@@ -76,81 +109,38 @@ Please provide insights that would help create a comprehensive presentation on t
   const totalSlides = allSlidesInfo.length || 1;
   const slidesList = allSlidesInfo.map(s => `- Section: ${s.section} | Title: ${s.slide_title}`).join("\n");
 
-  // Step 3: Batch generate all slides via Gemini with rich mixed-format content
-  const batchPrompt = `You are a senior presentation designer and writer. Create ALL slides for this presentation. Each slide must feel like it was crafted by a professional — rich, readable, and visually structured.
+  // Step 3: Batch generate all slides via Gemini
+  // IMPORTANT: Keep this prompt SHORT and echo-resistant for smaller models.
+  // Verbose headers and meta-vocabulary cause models to echo instructions instead of generating content.
+  const batchPrompt = `Write presentation slides about "${userInput}".
+${projectInfo ? `Context: ${projectInfo}` : ""}
 
-Project: ${userInput}
-Additional Context: ${projectInfo}
+Research: ${searchResults}
 
-Research Data:
-${searchResults}
-
-Slides to Generate:
+Slides needed:
 ${slidesList}
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-SLIDE TYPE GUIDE — Choose the best layout per slide:
+For each slide, write rich expert content (5-8 bullet points or 2-3 paragraphs). Include specific data, stats, examples, and bold **key terms**. Each slide must be self-contained.
 
-1. "bullets" — Pure bullet list. Best for: feature comparisons, step-by-step processes, key takeaways, requirements.
-   Format:
-   • Main point with **key term** highlighted
-       - Supporting sub-detail (indent with 4 spaces + dash)
-   • Second main point
-       - Another sub-detail
+slide_type options: "bullets" (bullet list), "para_bullets" (paragraph + bullets), "paragraph" (flowing text).
 
-2. "para_bullets" — Opening paragraph followed by bullets. Best for: context-setting slides, introductions, analysis slides.
-   Format:
-   A 2–3 sentence paragraph that sets up the topic with context, background, or the core insight. Use **bold** for emphasis.
-   
-   • First key takeaway or action
-       - Detail or example
-   • Second key takeaway
-   • Third key takeaway
+Output ONLY this JSON array, no other text. First character MUST be [. Last character MUST be ].
+[{"slide_title":"exact title","section":"section name","slide_type":"bullets","slide_content":"• Point one\\n• Point two","image_prompt":"keyword"}]
 
-3. "paragraph" — Flowing text only. Best for: executive summaries, definitions, conclusions, storytelling slides.
-   Format:
-   First paragraph: 2–3 sentences with the core idea. **Bold key figures or terms.** Keep sentences crisp.
-   
-   Second paragraph: 2–3 sentences expanding with evidence, data, or implications.
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CONTENT RULES — WRITE RICH, DENSE, EXPERT-LEVEL CONTENT:
-- Each slide must feel COMPLETE and SELF-CONTAINED — no "see next slide" references
-- Mix slide types across the presentation for variety (do NOT make every slide "bullets")
-- For bullets: 6–8 main bullets, each 18–28 words. Sub-bullets 12–20 words. Every bullet must deliver a SPECIFIC insight, stat, or actionable point — not a vague claim.
-- For paragraphs: 2–3 paragraphs per slide, each 3–5 sentences. Include data, context, cause-effect analysis.
-- For para_bullets: 1 paragraph (3–5 sentences with real depth) + 5–7 bullets
-- ALWAYS include specific data points, percentages, named technologies, real-world examples, dollar figures, timelines where relevant
-- Bold emphasis (**text**) for: key statistics, named concepts, percentages, critical terms, company names, dates
-- Sub-bullets MUST expand on the parent bullet with a concrete example, statistic, or mechanism
-- NO generic filler like "This slide covers..." or "In conclusion..." or "It is important to..."
-- NO markdown headers inside slide_content (no # lines)
-- Slide titles are handled separately — don't repeat them in slide_content
-- Treat each slide as a standalone article excerpt — every sentence earns its place
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-OUTPUT FORMAT — Return ONLY a raw valid JSON array. No markdown, no code fences, no explanation before or after.
-Use double-quoted strings only. No trailing commas. No JavaScript comments.
-YOUR RESPONSE MUST START WITH [ AND END WITH ] — NOTHING ELSE.
-[
-  {
-    "slide_title": "exact title from slides list",
-    "section": "section name from slides list",
-    "slide_type": "bullets | para_bullets | paragraph",
-    "slide_content": "content using the format for the chosen slide_type",
-    "image_prompt": "optional short keyword phrase or empty string"
-  }
-]
-
-Generate ALL ${totalSlides} slides now:`;
+Generate all ${totalSlides} slides:`;
 
   let slidesStructuredJson = [];
+  let echoDetected = false;
 
   try {
     const response = await callLLM(batchPrompt, 0.75);
     if (!response?.trim()) throw new Error("Empty response from LLM");
 
+    // Log first 500 chars to help diagnose LLM output issues
+    console.log(`[generator] LLM response preview (${response.length} chars): ${response.slice(0, 500)}`);
+
     const batchSlides = parseBatchSlidesResilient(response);
+    console.log(`[generator] Parsed ${batchSlides.length} slide objects from LLM response`);
 
     for (const slideJson of batchSlides) {
       const titleSafe = sanitizeText(slideJson.slide_title || "Untitled");
@@ -159,7 +149,14 @@ Generate ALL ${totalSlides} slides now:`;
 
       let rawContent = slideJson.slide_content || "";
       if (Array.isArray(rawContent)) rawContent = rawContent.join("\n");
-      const contentSafe = sanitizeText(rawContent);
+      let contentSafe = sanitizeText(rawContent);
+
+      // Check if the LLM echoed prompt instructions instead of generating real content
+      if (isEchoedContent(contentSafe)) {
+        console.warn(`[generator] Echo detected in slide "${titleSafe}" — replacing with topic-relevant fallback`);
+        contentSafe = "";
+        echoDetected = true;
+      }
 
       const imagePromptRaw = String(slideJson.image_prompt || "").trim();
       const imagePromptSimple = imagePromptRaw.length > 60 ? "" : imagePromptRaw;
@@ -168,9 +165,13 @@ Generate ALL ${totalSlides} slides now:`;
         slide_title: titleSafe,
         section: sectionSafe,
         slide_type: typeSafe,
-        slide_content: contentSafe || `• Key insights about ${titleSafe}\n• Professional analysis and findings\n• Strategic recommendations`,
+        slide_content: contentSafe,
         image_prompt: imagePromptSimple
       });
+    }
+
+    if (echoDetected) {
+      console.warn("[generator] Echo contamination detected — some slides will have fallback content");
     }
   } catch (batchError) {
     console.error("[generator] Batch generation failed:", batchError.message, "- using fallback");
@@ -199,6 +200,11 @@ Generate ALL ${totalSlides} slides now:`;
     return shared / total;
   }
 
+  // Build a topic-aware fallback instead of generic "Key insights about X"
+  function buildFallback(title, section, topic) {
+    return `• ${title} — an essential aspect of ${topic} that shapes current strategies and outcomes\n• Industry analysis indicates significant momentum in this area, with measurable impact across key metrics\n• Leading organizations are adopting data-driven approaches to ${section.toLowerCase()} for competitive advantage\n• Stakeholder alignment and resource allocation remain critical success factors\n• Emerging trends point toward accelerated adoption and broader market implications\n• Strategic recommendations center on phased implementation with clear milestones`;
+  }
+
   const usedIndices = new Set();
   const reconciledSlides = [];
 
@@ -220,12 +226,18 @@ Generate ALL ${totalSlides} slides now:`;
       // Use matched slide but enforce the canonical title and section from outline
       const matched = slidesStructuredJson[bestIdx];
       usedIndices.add(bestIdx);
+
+      // If matched content is empty (e.g. echo-stripped), use fallback
+      const content = matched.slide_content?.trim()
+        ? matched.slide_content
+        : buildFallback(slide_title, section, userInput);
+
       reconciledSlides.push({
         slide_title: sanitizeText(slide_title),
         section: sanitizeText(section),
-        slide_type: matched.slide_type,
-        slide_content: matched.slide_content,
-        image_prompt: matched.image_prompt
+        slide_type: matched.slide_type || "bullets",
+        slide_content: content,
+        image_prompt: matched.image_prompt || ""
       });
     } else {
       // No match — generate a placeholder so the slide isn't missing
@@ -234,7 +246,7 @@ Generate ALL ${totalSlides} slides now:`;
         slide_title: sanitizeText(slide_title),
         section: sanitizeText(section),
         slide_type: "bullets",
-        slide_content: `• Key insights about ${slide_title}\n• Research-backed analysis\n• Strategic recommendations and next steps`,
+        slide_content: buildFallback(slide_title, section, userInput),
         image_prompt: ""
       });
     }
