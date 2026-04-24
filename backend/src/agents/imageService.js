@@ -6,6 +6,10 @@ import { Readable } from "node:stream";
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36";
 
+// 1x1 PNG fallback used when external image sources fail.
+const LOCAL_PLACEHOLDER_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO5/Y4sAAAAASUVORK5CYII=";
+
 // ─── Stopwords for query cleanup ─────────────────────────────────────────────
 const STOPWORDS = new Set([
   "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -195,6 +199,32 @@ async function downloadImage(url, outDir, filename) {
 }
 
 /**
+ * Download a free stock image variant using deterministic seed.
+ * This avoids paid APIs while guaranteeing broad image availability.
+ */
+async function downloadSeededStockImage(seed, outDir, filename) {
+  const safeSeed = String(seed || "deckgen").replace(/[^a-z0-9_-]/gi, "_");
+  const url = `https://picsum.photos/seed/${encodeURIComponent(safeSeed)}/1600/900`;
+  return downloadImage(url, outDir, filename);
+}
+
+/**
+ * Always-available local placeholder fallback.
+ */
+function writeLocalPlaceholderImage(outDir, filename) {
+  try {
+    fs.mkdirSync(outDir, { recursive: true });
+    const filePath = path.join(outDir, `${filename}.png`);
+    if (!fs.existsSync(filePath)) {
+      fs.writeFileSync(filePath, Buffer.from(LOCAL_PLACEHOLDER_PNG_BASE64, "base64"));
+    }
+    return filePath;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Main: fetch one image for a slide.
  * Tries multiple URLs until one downloads successfully.
  *
@@ -287,8 +317,42 @@ export async function fetchSlideImageOptions(queries, outDir, safeBasename) {
     } catch {}
   }
 
-  console.log(`[imageService] ✓ ${results.length}/3 diverse options for slide "${safeBasename}"`);
-  return results;
+  // Fill remaining slots with seeded stock images (free source, no API keys).
+  if (results.length < 3) {
+    const joined = queries.join("_").replace(/[^a-z0-9_]/gi, "_").slice(0, 60) || "slide";
+    let attempts = 0;
+    while (results.length < 3 && attempts < 6) {
+      const seed = `${safeBasename}_${joined}_${attempts}`;
+      const stock = await downloadSeededStockImage(seed, outDir, `${safeBasename}_stock_${results.length}_${attempts}`);
+      if (stock) results.push(stock);
+      attempts++;
+    }
+  }
+
+  // Final hard fallback: local placeholder images so every slide has options.
+  while (results.length < 3) {
+    const placeholder = writeLocalPlaceholderImage(outDir, `${safeBasename}_placeholder_${results.length}`);
+    if (!placeholder) break;
+    results.push(placeholder);
+  }
+
+  // Deduplicate while preserving order.
+  const unique = [];
+  const seen = new Set();
+  for (const p of results) {
+    if (!seen.has(p)) {
+      seen.add(p);
+      unique.push(p);
+    }
+  }
+
+  // If dedupe reduced list, pad by repeating last available image.
+  while (unique.length < 3 && unique.length > 0) {
+    unique.push(unique[unique.length - 1]);
+  }
+
+  console.log(`[imageService] ✓ ${unique.length}/3 diverse options for slide "${safeBasename}"`);
+  return unique.slice(0, 3);
 }
 
 /**
